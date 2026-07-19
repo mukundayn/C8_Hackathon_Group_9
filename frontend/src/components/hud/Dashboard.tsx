@@ -11,7 +11,7 @@ import {
   FileCode,
   CheckCircle2,
   AlertTriangle,
-  ChevronRight,
+  RefreshCw,
   Layers,
 } from "lucide-react";
 import { useAnalysis } from "../../hooks/useAnalysis";
@@ -33,7 +33,6 @@ import {
   isSoundEnabled,
   setSoundEnabled,
   playClickPulse,
-  playHoverTick,
   playSuccessChime,
 } from "../../utils/audio";
 import MetricGauges from "./MetricGauges";
@@ -46,50 +45,12 @@ import SlackBoard from "../integrations/SlackBoard";
 import JiraBoard from "../integrations/JiraBoard";
 import WebhookConnector from "../integrations/WebhookConnector";
 
-const SAMPLE_TEMPLATES = [
-  {
-    name: "KB HIT · DB pool exhaustion",
-    file: "postgres_db_failure.log",
-    text: `CRITICAL [2026-07-18T13:20:04] database-service: PostgreSQL connection pool exhausted!
-CRITICAL [2026-07-18T13:20:05] database-service: ConnectionPoolTimeoutException - Timeout waiting for active connections > 100
-ERROR [2026-07-18T13:20:07] user-repository: Failed to retrieve user credentials in userProfile.ts:42
-ERROR [2026-07-18T13:20:10] api-gateway: Internal Server Error 500 on GET /api/v1/users/profile
-INFO [2026-07-18T13:20:12] database-service: Re-pooling failed. Active connection backlog index: 120`,
-  },
-  {
-    name: "KB HIT · K8s OOMKilled",
-    file: "k8s_oom_crash.log",
-    text: `INFO [2026-07-18T13:21:40] pdf-generator: Starting high-volume monthly reports aggregation.
-WARN [2026-07-18T13:21:45] report-service: Memory allocation limit approaching 85% utilization threshold.
-ERROR [2026-07-18T13:21:51] report-service: process out of memory - memory allocation failed.
-CRITICAL [2026-07-18T13:21:52] kubernetes-kubelet: Container crash detected in pod: report-worker-5b98f. Exit Code 137.
-CRITICAL [2026-07-18T13:21:53] kubernetes-kubelet: OOMKilled - Pod resources limit exceeded.`,
-  },
-  {
-    name: "KB MISS · Novel unknown fault",
-    file: "novel_unknown_fault.log",
-    text: `CRITICAL [2026-07-18T14:01:00] chronos-orchestrator: TEMPORAL_ANCHOR_DESYNC code=QX-7741 — causality ledger checksum mismatch
-ERROR [2026-07-18T14:01:01] chronos-orchestrator: flux-capacitor manifold pressure exceeded soft limit (τ=9.4)
-ERROR [2026-07-18T14:01:02] chronos-orchestrator: unable to reconcile wormhole lease with sidereal registry
-FATAL [2026-07-18T14:01:03] chronos-orchestrator: UNKNOWN category incident — no prior runbook signature matches QX-7741
-CRITICAL [2026-07-18T14:01:04] api-gateway: cascading 503 on /v9/time-travel/commit`,
-  },
-  {
-    name: "KB HIT · JWT flood",
-    file: "auth_brute_force.log",
-    text: `WARN [2026-07-18T13:23:01] firewall-waf: Extreme high-frequency signature access at endpoint /api/v1/auth/login
-ERROR [2026-07-18T13:23:02] auth-service: TokenExpiredError - cryptographic verification failed for incoming JWT token.
-ERROR [2026-07-18T13:23:03] auth-service: TokenExpiredError - brute-force sign signature mismatch from remote subnet IP: 192.168.10.22
-WARN [2026-07-18T13:23:05] auth-service: CPU overload detected on verification worker pool (99.4% capacity).
-CRITICAL [2026-07-18T13:23:06] auth-service: System throttling auth pipelines due to JWT Flood attack.`,
-  },
-];
-
 export default function Dashboard() {
   const { signOut } = useAuth();
   const { operator } = useOperator();
   const analysis = useAnalysis(operator.expertise);
   const live = useLiveEvents(true);
+  const { dismissAlert, dismissAllAlerts } = live;
   const traffic = useTraffic(true, analysis.runId);
   const hud = useHudMetrics(true, analysis.runId);
 
@@ -235,6 +196,30 @@ export default function Dashboard() {
     );
   }, []);
 
+  const handleDismissAlert = useCallback(
+    (id: string) => {
+      setHitlAlerts((prev) =>
+        prev.map((a) =>
+          a.id === id ? { ...a, resolved: true, hitlStatus: a.hitl ? "rejected" : a.hitlStatus } : a,
+        ),
+      );
+      dismissAlert(id);
+    },
+    [dismissAlert],
+  );
+
+  const handleDismissAllThreats = useCallback(() => {
+    dismissAllAlerts();
+  }, [dismissAllAlerts]);
+
+  const handleDismissAllHitl = useCallback(() => {
+    setHitlAlerts((prev) =>
+      prev.map((a) =>
+        a.resolved ? a : { ...a, resolved: true, hitlStatus: "rejected" as const },
+      ),
+    );
+  }, []);
+
   const handleSoundToggle = () => {
     const next = !sound;
     setSound(next);
@@ -260,12 +245,6 @@ export default function Dashboard() {
     playSuccessChime();
     beginNewAnalysis();
     void analysis.runFile(file);
-  };
-
-  const runTemplate = (text: string, filename: string) => {
-    playClickPulse();
-    beginNewAnalysis();
-    void analysis.runText(text, filename);
   };
 
   const completedCount = analysis.agents.filter((a) => a.status === "completed").length;
@@ -296,7 +275,9 @@ export default function Dashboard() {
 
       <AlertNotification
         alerts={mergedAlerts}
-        onDismiss={live.dismissAlert}
+        onDismiss={handleDismissAlert}
+        onDismissAllThreats={handleDismissAllThreats}
+        onDismissAllHitl={handleDismissAllHitl}
         onApproveHitl={handleApproveHitl}
         onRejectHitl={handleRejectHitl}
       />
@@ -432,11 +413,36 @@ export default function Dashboard() {
         <div className="lg:col-span-7 space-y-6">
           {/* Upload portal */}
           <div className="border border-slate-800 bg-slate-900/40 rounded-2xl p-6 backdrop-blur-md text-left relative overflow-hidden">
-            <div className="absolute top-2 right-4 flex items-center gap-1 text-[9px] font-mono text-slate-500">
-              <Upload className="w-3 h-3" />
-              CHANNEL: DIRECT_IO
+            <div className="absolute top-2 right-4 flex items-center gap-2">
+              <button
+                type="button"
+                disabled={!analysis.flowCompleted || analysis.running}
+                title={
+                  analysis.flowCompleted
+                    ? "Clear flowchart + upload for the next file (keeps tiles & results)"
+                    : "Available after the full pipeline finishes"
+                }
+                onClick={() => {
+                  playClickPulse();
+                  analysis.resetForNextUpload();
+                  setUploadError(null);
+                  if (fileInputRef.current) fileInputRef.current.value = "";
+                }}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded border text-[9px] font-mono uppercase tracking-wider transition ${
+                  analysis.flowCompleted && !analysis.running
+                    ? "border-cyan-500/40 bg-cyan-950/30 text-cyan-300 hover:border-cyan-400/60 cursor-pointer"
+                    : "border-slate-800 bg-slate-950/40 text-slate-600 cursor-not-allowed"
+                }`}
+              >
+                <RefreshCw className="w-3 h-3" />
+                Refresh
+              </button>
+              <span className="flex items-center gap-1 text-[9px] font-mono text-slate-500">
+                <Upload className="w-3 h-3" />
+                CHANNEL: DIRECT_IO
+              </span>
             </div>
-            <h2 className="text-sm font-mono uppercase tracking-widest text-cyan-400 mb-4 flex items-center gap-2">
+            <h2 className="text-sm font-mono uppercase tracking-widest text-cyan-400 mb-4 flex items-center gap-2 pr-36">
               <Upload className="w-4 h-4 text-cyan-400" />
               Log Stream & Automated Diagnostic Portal
             </h2>
@@ -497,27 +503,6 @@ export default function Dashboard() {
                 <span>{uploadError ?? analysis.error}</span>
               </div>
             )}
-
-            <div className="mt-5 pt-4 border-t border-slate-800/80">
-              <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-3">
-                Load High-Fidelity Incident Templates
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {SAMPLE_TEMPLATES.map((tpl) => (
-                  <button
-                    key={tpl.file}
-                    type="button"
-                    disabled={analysis.running}
-                    onMouseEnter={playHoverTick}
-                    onClick={() => runTemplate(tpl.text, tpl.file)}
-                    className="flex items-center justify-between p-2.5 rounded bg-slate-950 border border-slate-800 hover:border-slate-700 hover:bg-slate-900/60 text-[11px] font-mono text-slate-300 hover:text-cyan-300 text-left transition disabled:opacity-50 cursor-pointer"
-                  >
-                    <span className="truncate">{tpl.name}</span>
-                    <ChevronRight className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
 
           <FlowChart

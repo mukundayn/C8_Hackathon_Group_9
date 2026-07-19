@@ -11,6 +11,7 @@ export interface UseLiveEvents {
   alerts: AnomalyAlert[];
   connected: boolean;
   dismissAlert: (id: string) => void;
+  dismissAllAlerts: () => void;
   clearLogs: () => void;
 }
 
@@ -27,6 +28,10 @@ export function useLiveEvents(enabled: boolean): UseLiveEvents {
 
   const dismissAlert = useCallback((id: string) => {
     setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, resolved: true } : a)));
+  }, []);
+
+  const dismissAllAlerts = useCallback(() => {
+    setAlerts((prev) => prev.map((a) => ({ ...a, resolved: true })));
   }, []);
 
   const clearLogs = useCallback(() => {
@@ -69,5 +74,5 @@ export function useLiveEvents(enabled: boolean): UseLiveEvents {
     };
   }, [enabled]);
 
-  return { logs, alerts, connected, dismissAlert, clearLogs };
+  return { logs, alerts, connected, dismissAlert, dismissAllAlerts, clearLogs };
 }

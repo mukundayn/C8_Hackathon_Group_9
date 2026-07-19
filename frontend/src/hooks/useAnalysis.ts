@@ -25,9 +25,13 @@ export interface UseAnalysis {
   fileName: string | null;
   /** Monotonic id — bumps at the start of every analyze so gauges can roll up once per run. */
   runId: number;
+  /** True after a run reaches `done` and agents are finalized (until armed for next upload). */
+  flowCompleted: boolean;
   runFile: (file: File) => Promise<void>;
   runText: (text: string, filename: string) => Promise<void>;
   reset: () => void;
+  /** Clear flowchart + upload cue only; keep last result and session metrics. */
+  resetForNextUpload: () => void;
 }
 
 /**
@@ -43,6 +47,7 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [runId, setRunId] = useState(0);
+  const [flowCompleted, setFlowCompleted] = useState(false);
   const runSeq = useRef(0);
   const activeRun = useRef(0);
 
@@ -52,7 +57,23 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
     setDebugLines([]);
     setResult(null);
     setError(null);
+    setFileName(null);
+    setFlowCompleted(false);
   }, []);
+
+  /** Arm upload + flowchart for another file without wiping results / rollups. */
+  const resetForNextUpload = useCallback(() => {
+    if (!flowCompleted) return;
+    activeRun.current = 0;
+    setAgents(initialAgents());
+    setTrace([]);
+    setDebugLines([]);
+    setFileName(null);
+    setError(null);
+    setRunning(false);
+    setFlowCompleted(false);
+    // keep result + runId — Results panel, HITL, and session tiles stay as-is
+  }, [flowCompleted]);
 
   const runFile = useCallback(
     async (file: File): Promise<void> => {
@@ -61,6 +82,7 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
       activeRun.current = thisRun;
       setRunId(thisRun);
       setRunning(true);
+      setFlowCompleted(false);
       setFileName(file.name);
       setAgents(
         initialAgents().map(
@@ -106,6 +128,7 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
             setResult(finalState);
             setAgents((prev) => finalizeAgents(prev));
             setRunning(false);
+            setFlowCompleted(true);
             if (finalState && typeof finalState === "object" && "error" in finalState) {
               const msg = String((finalState as { error?: unknown }).error || "");
               if (msg) setError(msg);
@@ -118,6 +141,8 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
               prev.map((a): AgentState => (a.status === "active" ? { ...a, status: "failed" } : a)),
             );
             setRunning(false);
+            // Allow refresh after a failed run so the operator can clear the chart.
+            setFlowCompleted(true);
           },
         },
         expertise,
@@ -141,8 +166,10 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
     error,
     fileName,
     runId,
+    flowCompleted,
     runFile,
     runText,
     reset,
+    resetForNextUpload,
   };
 }
