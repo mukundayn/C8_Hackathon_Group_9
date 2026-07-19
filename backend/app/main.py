@@ -59,7 +59,10 @@ def _jsonable(obj):
         return [_jsonable(x) for x in obj]
     if isinstance(obj, dict):
         return {k: _jsonable(v) for k, v in obj.items()}
-    return obj
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+    # Keep SSE payloads JSON-safe even if a node sneaks in a non-serializable value.
+    return str(obj)
 
 
 def _merge_update(final: dict, update: dict) -> None:
@@ -73,6 +76,23 @@ def _merge_update(final: dict, update: dict) -> None:
 
 def _parse_expertise(raw: str) -> list[str]:
     return [e.strip() for e in (raw or "").split(",") if e.strip()]
+
+
+def _done_payload(final: dict) -> dict:
+    """Build a JSON-safe `done` payload; drop bulky raw inputs from the wire."""
+    slim = {k: v for k, v in final.items() if k not in ("raw_logs",)}
+    try:
+        return _jsonable(slim)
+    except Exception:
+        return {
+            "issues": _jsonable(final.get("issues") or []),
+            "remediations": _jsonable(final.get("remediations") or []),
+            "cookbook": _jsonable(final.get("cookbook") or {}),
+            "jira_tickets": _jsonable(final.get("jira_tickets") or []),
+            "slack_result": _jsonable(final.get("slack_result") or {}),
+            "trace": _jsonable(final.get("trace") or []),
+            "fallback_results": _jsonable(final.get("fallback_results")),
+        }
 
 
 # ── API routes ────────────────────────────────────────────────────────────────
@@ -143,17 +163,46 @@ async def analyze(request: Request):
     async def event_stream():
         # Accumulate from streamed updates so the done event does not depend on
         # checkpoint deserialization (get_state) after the run.
+        # Always emit `error` and/or `done` so the UI never hangs on a dropped generator.
         final = dict(initial)
-        async for chunk in graph.astream(initial, run_config, stream_mode="updates"):
-            for node_name, update in chunk.items():
-                if not isinstance(update, dict):
-                    continue
-                _merge_update(final, update)
-                payload = {"node": node_name, "update": _jsonable(update)}
-                yield {"event": "node", "data": json.dumps(payload)}
-        yield {"event": "done", "data": json.dumps(_jsonable(final))}
+        try:
+            yield {
+                "event": "status",
+                "data": json.dumps({"phase": "started", "filename": filename, "chars": len(raw)}),
+            }
+            async for chunk in graph.astream(initial, run_config, stream_mode="updates"):
+                for node_name, update in chunk.items():
+                    if not isinstance(update, dict):
+                        continue
+                    _merge_update(final, update)
+                    payload = {"node": node_name, "update": _jsonable(update)}
+                    yield {"event": "node", "data": json.dumps(payload)}
+                    print(f"[analyze] node={node_name} ok")
+            yield {"event": "done", "data": json.dumps(_done_payload(final))}
+            print("[analyze] done emitted")
+        except Exception as exc:
+            # LLM/RAG failures, serialization bugs, etc. — surface to the client.
+            msg = f"{type(exc).__name__}: {exc}"
+            print(f"[analyze] stream failed: {msg}")
+            yield {"event": "error", "data": json.dumps({"message": msg})}
+            try:
+                partial = _done_payload(final)
+                partial["error"] = msg
+                yield {"event": "done", "data": json.dumps(partial)}
+            except Exception as done_exc:
+                yield {
+                    "event": "done",
+                    "data": json.dumps(
+                        {
+                            "issues": [],
+                            "trace": final.get("trace") or [],
+                            "error": f"{msg} (and done serialize failed: {done_exc})",
+                        }
+                    ),
+                }
 
-    return EventSourceResponse(event_stream())
+    # ping keeps Render/proxies from treating a quiet LLM wait as a dead connection
+    return EventSourceResponse(event_stream(), ping=15)
 
 
 @api.get("/events/recent")

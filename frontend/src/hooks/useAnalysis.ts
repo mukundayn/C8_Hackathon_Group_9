@@ -72,6 +72,11 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
             setResult(finalState);
             setAgents((prev) => finalizeAgents(prev));
             setRunning(false);
+            // Partial done after a server error still carries useful agent output.
+            if (finalState && typeof finalState === "object" && "error" in finalState) {
+              const msg = String((finalState as { error?: unknown }).error || "");
+              if (msg) setError(msg);
+            }
           },
           onError: (err) => {
             setError(err.message);

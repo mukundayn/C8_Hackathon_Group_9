@@ -35,7 +35,7 @@ async function readErrorDetail(res: Response): Promise<string> {
 
 async function consumeAnalyzeStream(
   res: Response,
-  { onNode, onDone }: Pick<AnalyzeCallbacks, "onNode" | "onDone">,
+  { onNode, onDone, onError }: Pick<AnalyzeCallbacks, "onNode" | "onDone" | "onError">,
 ): Promise<boolean> {
   if (!res.body) return false;
   const reader = res.body.getReader();
@@ -46,7 +46,14 @@ async function consumeAnalyzeStream(
   const dispatch = (events: SseFrame[]): void => {
     for (const { evt, data } of events) {
       if (evt === "node") onNode?.(data as NodeEvent);
-      else if (evt === "done") {
+      else if (evt === "error") {
+        const msg =
+          data && typeof data === "object" && "message" in data
+            ? String((data as { message: unknown }).message)
+            : "Analysis failed on the server.";
+        // Prefer the server's message; still wait for a possible partial `done`.
+        onError?.(new Error(msg));
+      } else if (evt === "done") {
         sawDone = true;
         onDone?.(data as AnalysisResult);
       }
@@ -104,9 +111,14 @@ export async function analyze(
       throw new Error(`Request failed: ${res.status} (${url}) — ${detail}`);
     }
 
-    sawDone = await consumeAnalyzeStream(res, { onNode, onDone });
+    sawDone = await consumeAnalyzeStream(res, { onNode, onDone, onError });
     if (!sawDone) {
-      onError?.(new Error("Analysis stream ended before results were received."));
+      onError?.(
+        new Error(
+          "Analysis stream ended before results were received. " +
+            "Usually the Render process crashed or hit an LLM/RAG error mid-run — check the service logs.",
+        ),
+      );
     }
   } catch (err) {
     if (!sawDone) onError?.(err instanceof Error ? err : new Error(String(err)));
