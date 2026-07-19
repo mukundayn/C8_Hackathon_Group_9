@@ -299,9 +299,35 @@ export default function ResultsPanel({ result, trace, running }: ResultsPanelPro
         )}
       </div>
 
-      <div className="mt-4 border-t border-slate-800/85 pt-3 flex justify-between items-center text-[9px] font-mono text-slate-500 uppercase">
-        <span>KB path</span>
-        <span>{hasResult ? kb.label : "AWAITING_INPUT"}</span>
+      <div className="mt-4 border-t border-slate-800/85 pt-3 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1.5 text-[9px] font-mono uppercase">
+        {!hasResult ? (
+          <span className="text-slate-600 w-full text-center sm:text-left">
+            KB PATH · STANDBY — RUN ANALYZE TO GROUND FIXES IN RUNBOOKS
+          </span>
+        ) : (
+          <>
+            <span
+              className={
+                kb.learnedIntoKb || kb.learned.length > 0
+                  ? "text-violet-300"
+                  : kb.hits.length > 0
+                    ? "text-emerald-400"
+                    : kb.misses.length > 0
+                      ? "text-amber-300"
+                      : "text-slate-400"
+              }
+            >
+              KB PATH · {kb.label}
+            </span>
+            <span className="text-slate-500">
+              {kb.learnedIntoKb
+                ? "FALLBACK RAN · LEARNED"
+                : kb.hits.length > 0
+                  ? "FALLBACK SKIPPED · HIT"
+                  : "SEE RESOLUTION PANEL"}
+            </span>
+          </>
+        )}
       </div>
     </div>
   );

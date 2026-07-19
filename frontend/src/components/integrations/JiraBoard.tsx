@@ -4,9 +4,15 @@ import type { JiraTicket } from "../../types";
 interface JiraBoardProps {
   tickets: JiraTicket[];
   mode?: "real" | "mock";
+  /** Why the board is idle (KB HIT skip, awaiting HITL, etc.). */
+  standbyHint?: string;
 }
 
-export default function JiraBoard({ tickets, mode = "mock" }: JiraBoardProps) {
+export default function JiraBoard({
+  tickets,
+  mode = "mock",
+  standbyHint = "NO TICKETS YET. NEWLY LEARNED CRITICALS REQUIRE HITL APPROVE.",
+}: JiraBoardProps) {
   return (
     <div className="xl:col-span-5 flex flex-col justify-between bg-slate-950/60 border border-slate-800/80 rounded-xl p-5 relative overflow-hidden">
       <div className="absolute top-0 right-0 w-32 h-32 bg-pink-500/5 rounded-full blur-2xl pointer-events-none" />
@@ -22,7 +28,7 @@ export default function JiraBoard({ tickets, mode = "mock" }: JiraBoardProps) {
             className={`px-2 py-0.5 rounded text-[9px] font-mono border ${
               mode === "real"
                 ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-400"
-                : "bg-pink-950/20 border-pink-500/40 text-pink-400"
+                : "bg-slate-900 border-slate-700 text-slate-400"
             }`}
           >
             {mode === "real" ? "LIVE_JIRA" : "MOCK_JIRA"}
@@ -35,8 +41,8 @@ export default function JiraBoard({ tickets, mode = "mock" }: JiraBoardProps) {
 
         <div className="space-y-2.5 max-h-[260px] overflow-y-auto custom-scrollbar">
           {tickets.length === 0 ? (
-            <p className="text-[10px] font-mono text-slate-600 text-center py-8">
-              NO TICKETS YET. NEWLY LEARNED CRITICALS REQUIRE HITL APPROVE.
+            <p className="text-[10px] font-mono text-slate-500 text-center py-8 leading-relaxed px-2">
+              {standbyHint}
             </p>
           ) : (
             tickets.map((ticket) => {
@@ -114,7 +120,7 @@ export default function JiraBoard({ tickets, mode = "mock" }: JiraBoardProps) {
 
       <div className="mt-4 border-t border-slate-850 pt-3 flex items-center justify-between text-[9px] font-mono text-slate-500">
         <span>INTEGRATION: ATLASSIAN REST</span>
-        <span>CONVERGENCE ROUTE: ACTIVE</span>
+        <span>{mode === "real" ? "LIVE_CLIENT" : "MOCK — SET JIRA_* ENV"}</span>
       </div>
     </div>
   );

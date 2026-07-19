@@ -50,7 +50,7 @@ const EDGES: LayoutEdge[] = [
   { from: "image_analyzer", to: "remediation", dashed: true },
   { from: "remediation", to: "cookbook", label: "KB HIT" },
   { from: "remediation", to: "fallback", label: "KB MISS" },
-  { from: "fallback", to: "cookbook", label: "learn → Chroma" },
+  { from: "fallback", to: "cookbook", label: "after learn" },
   { from: "cookbook", to: "jira", label: "critical/high" },
   { from: "cookbook", to: "notifier", label: "else" },
   { from: "jira", to: "notifier" },
@@ -222,8 +222,8 @@ export default function FlowChart({ agents, overallProgress, debugLines = [] }: 
             const isActive = st === "active";
             const isDone = st === "completed";
             const wasSkipped = Boolean(agent?.message?.startsWith("Skipped"));
-            // Optional nodes (image_analyzer) stay unticked when the branch was not taken.
-            const showTick = isDone && !(n.optional && wasSkipped);
+            // Green tick only when the node actually executed — never for SKIPPED (fallback/jira).
+            const showTick = isDone && !wasSkipped;
             return (
               <g
                 key={n.id}
@@ -253,14 +253,14 @@ export default function FlowChart({ agents, overallProgress, debugLines = [] }: 
                   height={n.h}
                   rx={rx}
                   ry={rx}
-                  fill={wasSkipped && n.optional ? nodeFill("idle") : nodeFill(st)}
+                  fill={wasSkipped ? "#0f172a" : nodeFill(st)}
                   stroke={
-                    wasSkipped && n.optional
-                      ? nodeStroke("idle", true)
+                    wasSkipped
+                      ? "#64748b"
                       : nodeStroke(st, n.optional)
                   }
                   strokeWidth={isActive ? 2.4 : showTick ? 2 : 1.6}
-                  strokeDasharray={n.optional ? "5 3" : undefined}
+                  strokeDasharray={n.optional || wasSkipped ? "5 3" : undefined}
                 />
                 {isActive && (
                   <text
@@ -287,8 +287,13 @@ export default function FlowChart({ agents, overallProgress, debugLines = [] }: 
                     fontSize: n.terminal ? 11 : 12,
                     fontFamily: "ui-monospace, monospace",
                     fontWeight: 700,
-                    fill:
-                      showTick ? "#6ee7b7" : isActive ? "#67e8f8" : "#94a3b8",
+                    fill: wasSkipped
+                      ? "#94a3b8"
+                      : showTick
+                        ? "#6ee7b7"
+                        : isActive
+                          ? "#67e8f8"
+                          : "#94a3b8",
                     pointerEvents: "none",
                   }}
                 >
@@ -302,18 +307,18 @@ export default function FlowChart({ agents, overallProgress, debugLines = [] }: 
                     style={{
                       fontSize: 9,
                       fontFamily: "ui-monospace, monospace",
-                      fill: isActive ? "#22d3ee" : "#64748b",
+                      fill: isActive ? "#22d3ee" : wasSkipped ? "#94a3b8" : "#64748b",
                       pointerEvents: "none",
                     }}
                   >
                     {st === "active"
                       ? "RUNNING…"
-                      : wasSkipped && n.optional
-                        ? "NOT USED"
+                      : wasSkipped
+                        ? n.optional
+                          ? "NOT USED"
+                          : "SKIPPED"
                         : st === "completed"
-                          ? agent.message.startsWith("Skipped")
-                            ? "SKIPPED"
-                            : "DONE"
+                          ? "DONE"
                           : st === "failed"
                             ? "FAILED"
                             : n.optional
@@ -321,7 +326,7 @@ export default function FlowChart({ agents, overallProgress, debugLines = [] }: 
                               : "PENDING"}
                   </text>
                 )}
-                {/* Green tick only when the node actually ran (not skipped optional). */}
+                {/* Green tick only when the node actually ran — never for SKIPPED. */}
                 {showTick && (
                   <g transform={`translate(${n.x + n.w - 2}, ${n.y - 2})`} aria-label="completed">
                     <circle r="9" fill="#059669" stroke="#6ee7b7" strokeWidth="1.5" />
@@ -346,15 +351,15 @@ export default function FlowChart({ agents, overallProgress, debugLines = [] }: 
           <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-emerald-600 text-[8px] text-white">
             ✓
           </span>{" "}
-          DONE (+ green tick)
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block w-3 h-3 rounded-sm border border-cyan-400 bg-cyan-950 animate-pulse" />{" "}
-          RUNNING (blinks)
+          DONE (ran)
         </span>
         <span className="flex items-center gap-1">
           <span className="inline-block w-3 h-3 rounded-sm border border-dashed border-slate-500 bg-slate-950" />{" "}
-          OPTIONAL
+          SKIPPED (branch not taken — e.g. KB HIT skips fallback)
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block w-3 h-3 rounded-sm border border-cyan-400 bg-cyan-950 animate-pulse" />{" "}
+          RUNNING
         </span>
         <span className="ml-auto">SOURCE: graph.astream · edges from backend/app/graph.py</span>
       </div>

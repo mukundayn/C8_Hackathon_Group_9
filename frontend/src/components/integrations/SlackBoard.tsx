@@ -4,9 +4,15 @@ import type { SlackResult } from "../../types";
 interface SlackBoardProps {
   slack: SlackResult | undefined;
   mode?: "real" | "mock";
+  /** Why the board is idle (KB HIT skip, awaiting HITL, etc.). */
+  standbyHint?: string;
 }
 
-export default function SlackBoard({ slack, mode = "mock" }: SlackBoardProps) {
+export default function SlackBoard({
+  slack,
+  mode = "mock",
+  standbyHint = "STANDBY — SLACK FIRES ONLY AFTER HITL APPROVE ON NEWLY LEARNED CRITICALS.",
+}: SlackBoardProps) {
   const channel = slack?.channel ?? "#incidents";
   const lines = (slack?.text_preview ?? "").split("\n").filter(Boolean);
 
@@ -25,12 +31,16 @@ export default function SlackBoard({ slack, mode = "mock" }: SlackBoardProps) {
             className={`px-2 py-0.5 rounded text-[9px] font-mono border ${
               mode === "real"
                 ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-400"
-                : slack
-                  ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-400"
-                  : "bg-slate-900 border-slate-800 text-slate-500"
+                : "bg-slate-900 border-slate-700 text-slate-400"
             }`}
           >
-            {mode === "real" ? (slack ? "LIVE · DELIVERED" : "LIVE · STANDBY") : slack ? "MOCK · DELIVERED" : "MOCK · STANDBY"}
+            {mode === "real"
+              ? slack
+                ? "LIVE · DELIVERED"
+                : "LIVE · STANDBY"
+              : slack
+                ? "MOCK · DELIVERED"
+                : "MOCK · STANDBY"}
           </span>
         </div>
 
@@ -38,8 +48,8 @@ export default function SlackBoard({ slack, mode = "mock" }: SlackBoardProps) {
 
         <div className="space-y-2 max-h-[260px] overflow-y-auto custom-scrollbar">
           {!slack ? (
-            <p className="text-[10px] font-mono text-slate-600 text-center py-8">
-              STANDBY — SLACK FIRES ONLY AFTER HITL APPROVE ON NEWLY LEARNED CRITICALS.
+            <p className="text-[10px] font-mono text-slate-500 text-center py-8 leading-relaxed px-2">
+              {standbyHint}
             </p>
           ) : (
             <div className="p-3 bg-slate-900 border border-slate-800/80 rounded-lg">
@@ -65,8 +75,8 @@ export default function SlackBoard({ slack, mode = "mock" }: SlackBoardProps) {
       </div>
 
       <div className="mt-4 border-t border-slate-850 pt-3 flex items-center justify-between text-[9px] font-mono text-slate-500">
-        <span>INTEGRATION: MCP SLACK</span>
-        <span>{slack?.permalink ? "PERMALINK_OK" : "MOCK_CLIENT"}</span>
+        <span>INTEGRATION: SLACK API</span>
+        <span>{mode === "real" ? "LIVE_CLIENT" : "MOCK — SET SLACK_BOT_TOKEN"}</span>
       </div>
     </div>
   );

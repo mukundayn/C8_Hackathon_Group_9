@@ -281,6 +281,13 @@ export default function Dashboard() {
   ];
   const displaySlack = approvedSlack ?? analysis.result?.slack_result;
   const mergedAlerts = [...hitlAlerts.filter((a) => !a.resolved), ...live.alerts];
+  const runKb = summarizeKbPath(analysis.result);
+  const ticketStandby =
+    runKb.hits.length > 0 && !runKb.learnedIntoKb && runKb.learned.length === 0
+      ? "KB HIT — JIRA/SLACK SKIPPED. TICKETING ONLY FOR NEWLY LEARNED CRITICALS (AFTER HITL APPROVE)."
+      : (analysis.result?.hitl_pending?.length ?? 0) > 0
+        ? "HITL PENDING — APPROVE THE THREAT ALERT TO OPEN JIRA + SLACK."
+        : "STANDBY — NEWLY LEARNED CRITICALS REQUIRE HITL APPROVE BEFORE TICKETING.";
 
   return (
     <div className="relative min-h-screen bg-[#060814] text-gray-300 font-sans p-4 lg:p-6 overflow-x-hidden">
@@ -557,8 +564,13 @@ export default function Dashboard() {
           <SlackBoard
             slack={displaySlack && Object.keys(displaySlack).length ? displaySlack : undefined}
             mode={integrationMode.slack}
+            standbyHint={ticketStandby}
           />
-          <JiraBoard tickets={displayTickets} mode={integrationMode.jira} />
+          <JiraBoard
+            tickets={displayTickets}
+            mode={integrationMode.jira}
+            standbyHint={ticketStandby}
+          />
           <WebhookConnector expertise={operator.expertise} connected={live.connected} />
         </div>
       </section>
