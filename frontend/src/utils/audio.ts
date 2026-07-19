@@ -3,6 +3,9 @@
 let audioCtx: AudioContext | null = null;
 let soundEnabled = true;
 
+/** Global loudness multiplier (+21% vs original = two +10% bumps). */
+const VOLUME = 1.21;
+
 function getAudioContext(): AudioContext {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
@@ -11,6 +14,10 @@ function getAudioContext(): AudioContext {
     void audioCtx.resume();
   }
   return audioCtx;
+}
+
+function vol(level: number): number {
+  return level * VOLUME;
 }
 
 export function setSoundEnabled(enabled: boolean): void {
@@ -30,7 +37,7 @@ export function playHoverTick(): void {
     osc.type = "sine";
     osc.frequency.setValueAtTime(1200, ctx.currentTime);
     osc.frequency.exponentialRampToValueAtTime(800, ctx.currentTime + 0.05);
-    gain.gain.setValueAtTime(0.015, ctx.currentTime);
+    gain.gain.setValueAtTime(vol(0.015), ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
     osc.connect(gain);
     gain.connect(ctx.destination);
@@ -50,7 +57,7 @@ export function playClickPulse(): void {
     osc.type = "triangle";
     osc.frequency.setValueAtTime(440, ctx.currentTime);
     osc.frequency.exponentialRampToValueAtTime(150, ctx.currentTime + 0.1);
-    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+    gain.gain.setValueAtTime(vol(0.08), ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
     osc.connect(gain);
     gain.connect(ctx.destination);
@@ -66,12 +73,12 @@ export function playSuccessChime(): void {
   try {
     const ctx = getAudioContext();
     const now = ctx.currentTime;
-    const playTone = (freq: number, start: number, duration: number, vol: number) => {
+    const playTone = (freq: number, start: number, duration: number, level: number) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = "sine";
       osc.frequency.setValueAtTime(freq, start);
-      gain.gain.setValueAtTime(vol, start);
+      gain.gain.setValueAtTime(vol(level), start);
       gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
       osc.connect(gain);
       gain.connect(ctx.destination);
@@ -100,8 +107,8 @@ export function playAnomalyAlarm(): void {
     osc.frequency.linearRampToValueAtTime(220, now + 0.4);
     osc.frequency.linearRampToValueAtTime(440, now + 0.6);
     osc.frequency.linearRampToValueAtTime(220, now + 0.8);
-    gain.gain.setValueAtTime(0.06, now);
-    gain.gain.linearRampToValueAtTime(0.06, now + 0.6);
+    gain.gain.setValueAtTime(vol(0.06), now);
+    gain.gain.linearRampToValueAtTime(vol(0.06), now + 0.6);
     gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
     const filter = ctx.createBiquadFilter();
     filter.type = "lowpass";
@@ -127,7 +134,7 @@ export function playBootSweep(): void {
     osc.frequency.setValueAtTime(100, now);
     osc.frequency.exponentialRampToValueAtTime(1000, now + 0.6);
     gain.gain.setValueAtTime(0.001, now);
-    gain.gain.exponentialRampToValueAtTime(0.05, now + 0.2);
+    gain.gain.exponentialRampToValueAtTime(vol(0.05), now + 0.2);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
     osc.connect(gain);
     gain.connect(ctx.destination);
@@ -147,7 +154,7 @@ export function playDataStreamSound(): void {
     osc.type = "sine";
     osc.frequency.setValueAtTime(1800, ctx.currentTime);
     osc.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.03);
-    gain.gain.setValueAtTime(0.005, ctx.currentTime);
+    gain.gain.setValueAtTime(vol(0.005), ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.03);
     osc.connect(gain);
     gain.connect(ctx.destination);

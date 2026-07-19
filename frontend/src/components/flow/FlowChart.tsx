@@ -342,7 +342,6 @@ export default function FlowChart({ agents, overallProgress, debugLines = [] }: 
         <span className="ml-auto">SOURCE: graph.astream · edges from backend/app/graph.py</span>
       </div>
 
-      {/* TEMP: plain debug log under flowchart — remove after testing */}
       <PipelineDebugLog lines={debugLines} />
     </div>
   );
