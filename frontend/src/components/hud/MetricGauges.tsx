@@ -4,10 +4,11 @@ interface MetricGaugesProps {
   ingestRate: number;
   avgResponseMs: number;
   activeAlerts: number;
-  /** KB HIT count (already known runbooks). */
+  /** Session rollup — KB HIT count across completed analyses. */
   kbHits: number;
-  /** Newly learned / MISS→LEARN count. */
+  /** Session rollup — newly learned / MISS→LEARN count. */
   kbLearned: number;
+  /** Session rollup — agent stages completed across runs. */
   agentsCompleted: number;
   agentsTotal: number;
   pipelineProgress: number;
@@ -57,7 +58,9 @@ export default function MetricGauges({
         <div className="h-1 bg-slate-950 rounded-full mt-1 overflow-hidden border border-slate-800">
           <div
             className="h-full bg-pink-500 rounded-full"
-            style={{ width: `${Math.min(100, Math.max(10, avgResponseMs / 5))}%` }}
+            style={{
+              width: `${Math.min(100, Math.max(10, avgResponseMs > 0 ? Math.log10(avgResponseMs + 1) * 25 : 0))}%`,
+            }}
           />
         </div>
       </div>
@@ -85,7 +88,7 @@ export default function MetricGauges({
         <div className="h-1 bg-slate-950 rounded-full mt-1 overflow-hidden border border-slate-800">
           <div
             className={`h-full rounded-full ${activeAlerts > 0 ? "bg-rose-500" : "bg-emerald-500"}`}
-            style={{ width: `${activeAlerts > 0 ? 100 : 10}%` }}
+            style={{ width: `${activeAlerts > 0 ? Math.min(100, 20 + activeAlerts * 15) : 10}%` }}
           />
         </div>
       </div>
@@ -110,17 +113,15 @@ export default function MetricGauges({
         </div>
       </div>
 
-      {/* Agent coverage */}
+      {/* Agent coverage — session rollup of stages completed */}
       <div className="border border-slate-800 bg-slate-900/40 rounded-2xl p-4 backdrop-blur-md flex flex-col justify-between h-24 text-left transition hover:border-slate-700">
         <div className="flex items-center justify-between text-xs font-mono text-slate-400 uppercase">
           <span>Agents Covered</span>
           <Sparkles className="w-4 h-4 text-cyan-400" />
         </div>
         <div className="mt-2 flex items-baseline gap-2">
-          <span className="text-2xl font-black text-white tracking-tight">
-            {agentsCompleted}/{agentsTotal}
-          </span>
-          <span className="text-[10px] font-mono text-cyan-400">STAGES</span>
+          <span className="text-2xl font-black text-white tracking-tight">{agentsCompleted}</span>
+          <span className="text-[10px] font-mono text-cyan-400">STAGES · /{agentsTotal} PER RUN</span>
         </div>
         <div className="h-1 bg-slate-950 rounded-full mt-1 overflow-hidden border border-slate-800">
           <div

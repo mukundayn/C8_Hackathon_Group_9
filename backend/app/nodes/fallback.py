@@ -63,21 +63,24 @@ Propose:
 
 
 def _needs_fallback(issue: dict, existing_remediations: list[dict]) -> bool:
-    """Determine if an issue needs fallback resolution."""
-    if issue.get("category") in UNKNOWN_CATEGORIES:
-        return True
+    """Determine if an issue needs fallback resolution.
 
-    has_remediation = any(
-        r.get("issue_id") == issue.get("id") for r in existing_remediations
-    )
-    if not has_remediation:
-        return True
+    Issues without a remediation row are intentionally skipped by RAG_MAX_ISSUES
+    — do not treat them as learn candidates (that caused multi-minute hangs).
+    """
+    if issue.get("category") in UNKNOWN_CATEGORIES:
+        # Only learn unknown when we actually tried to remediate it.
+        has_rem = any(r.get("issue_id") == issue.get("id") for r in existing_remediations)
+        return has_rem or not existing_remediations
 
     rem = next(
         (r for r in existing_remediations if r.get("issue_id") == issue.get("id")),
         None,
     )
-    if rem and not rem.get("grounded_in"):
+    if rem is None:
+        return False
+
+    if rem.get("kb_status") == "miss" or not rem.get("grounded_in"):
         return True
 
     return False

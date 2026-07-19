@@ -44,6 +44,15 @@ def test_critical_count_rollup():
     assert live_store.critical_count() == 2
 
 
+def test_avg_response_rolls_across_ingest_and_analyze():
+    live_store.add_event(message="a", response_time_ms=10)
+    live_store.add_event(message="b", response_time_ms=30)
+    assert live_store.avg_response_ms() == 20
+    live_store.record_analyze_ms(100)
+    # (10 + 30 + 100) / 3
+    assert live_store.avg_response_ms() == 47
+
+
 def test_traffic_points_aggregates_volume_and_severity():
     live_store.add_event(message="a", severity="error", timestamp="10:00:01", response_time_ms=100)
     live_store.add_event(message="b", severity="info", timestamp="10:00:01", response_time_ms=50)

@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -174,6 +175,7 @@ async def analyze(request: Request):
         # checkpoint deserialization (get_state) after the run.
         # Always emit `error` and/or `done` so the UI never hangs on a dropped generator.
         final = dict(initial)
+        t0 = time.perf_counter()
         try:
             yield {
                 "event": "status",
@@ -218,19 +220,29 @@ async def analyze(request: Request):
                                 )
                             ),
                         }
+            elapsed_ms = int(round((time.perf_counter() - t0) * 1000))
+            try:
+                live_store.record_analyze_ms(elapsed_ms)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[analyze] latency sample skipped: {exc}", flush=True)
             yield {
                 "event": "debug",
                 "data": json.dumps(
                     debug_line(
                         file=MAIN_SOURCE,
-                        message="analyze done · emitting final state",
+                        message=f"analyze done · {elapsed_ms}ms · emitting final state",
                     )
                 ),
             }
             yield {"event": "done", "data": json.dumps(_done_payload(final))}
-            print("[analyze] done emitted", flush=True)
+            print(f"[analyze] done emitted elapsed_ms={elapsed_ms}", flush=True)
         except Exception as exc:
             # LLM/RAG failures, serialization bugs, etc. — surface to the client.
+            elapsed_ms = int(round((time.perf_counter() - t0) * 1000))
+            try:
+                live_store.record_analyze_ms(elapsed_ms)
+            except Exception:
+                pass
             msg = f"{type(exc).__name__}: {exc}"
             print(f"[analyze] stream failed: {msg}", flush=True)
             yield {
@@ -274,17 +286,10 @@ def metrics_traffic():
 
 @api.get("/metrics/hud")
 def metrics_hud():
-    """Cockpit gauge rollups driven by every ingested log line."""
-    events = live_store.recent()
-    with_rt = [e for e in events if (e.get("response_time_ms") or 0) > 0]
-    avg_ms = (
-        round(sum(int(e["response_time_ms"]) for e in with_rt) / len(with_rt))
-        if with_rt
-        else 0
-    )
+    """Cockpit gauge rollups driven by every ingested log line + analyze runs."""
     return {
         "ingest_total": live_store.ingest_total(),
-        "avg_response_ms": avg_ms,
+        "avg_response_ms": live_store.avg_response_ms(),
         "critical_incidents": live_store.critical_count(),
     }
 

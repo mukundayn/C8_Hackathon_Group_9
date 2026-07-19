@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { analyze, textToLogFile } from "../lib/api";
 import {
   applyNodeEvent,
@@ -23,6 +23,8 @@ export interface UseAnalysis {
   running: boolean;
   error: string | null;
   fileName: string | null;
+  /** Monotonic id — bumps at the start of every analyze so gauges can roll up once per run. */
+  runId: number;
   runFile: (file: File) => Promise<void>;
   runText: (text: string, filename: string) => Promise<void>;
   reset: () => void;
@@ -40,6 +42,9 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [runId, setRunId] = useState(0);
+  const runSeq = useRef(0);
+  const activeRun = useRef(0);
 
   const reset = useCallback(() => {
     setAgents(initialAgents());
@@ -51,6 +56,10 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
 
   const runFile = useCallback(
     async (file: File): Promise<void> => {
+      runSeq.current += 1;
+      const thisRun = runSeq.current;
+      activeRun.current = thisRun;
+      setRunId(thisRun);
       setRunning(true);
       setFileName(file.name);
       setAgents(
@@ -70,12 +79,16 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
         file,
         {
           onNode: ({ node, update }) => {
+            if (activeRun.current !== thisRun) return;
             const tr = update?.trace;
             const msg = tr && tr.length > 0 ? tr[tr.length - 1].message : undefined;
-            setAgents((prev) => applyNodeEvent(prev, node, msg));
+            setAgents((prev) =>
+              applyNodeEvent(prev, node, msg, update as Record<string, unknown> | undefined),
+            );
             if (tr && tr.length > 0) setTrace((t) => [...t, ...tr]);
           },
           onDebug: (line) => {
+            if (activeRun.current !== thisRun) return;
             const stamped: DebugLogLine = {
               ...line,
               ts: new Intl.DateTimeFormat("en-GB", {
@@ -89,6 +102,7 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
             setDebugLines((prev) => [...prev.slice(-200), stamped]);
           },
           onDone: (finalState) => {
+            if (activeRun.current !== thisRun) return;
             setResult(finalState);
             setAgents((prev) => finalizeAgents(prev));
             setRunning(false);
@@ -98,6 +112,7 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
             }
           },
           onError: (err) => {
+            if (activeRun.current !== thisRun) return;
             setError(err.message);
             setAgents((prev) =>
               prev.map((a): AgentState => (a.status === "active" ? { ...a, status: "failed" } : a)),
@@ -125,6 +140,7 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
     running,
     error,
     fileName,
+    runId,
     runFile,
     runText,
     reset,

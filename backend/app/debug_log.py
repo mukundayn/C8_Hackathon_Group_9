@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.routing import route_after_remediation
+
 # Real module paths (repo-relative) for evaluator / debug UI.
 NODE_SOURCE_FILES: dict[str, str] = {
     "classifier": "backend/app/nodes/classifier.py",
@@ -60,16 +62,22 @@ def describe_node_update(node_name: str, update: dict[str, Any]) -> list[dict[st
                 message=f"RAG path · KB HIT={hits} MISS={misses} (see kb_status on remediations)",
             )
         )
+        # Approximate issues from rem rows — router ignores uncapped issues anyway.
+        synthetic = {
+            "issues": [
+                {"id": r.get("issue_id"), "category": "database"}
+                for r in rems
+                if isinstance(r, dict) and r.get("issue_id")
+            ],
+            "remediations": rems,
+        }
+        dest = route_after_remediation(synthetic)
         lines.append(
             debug_line(
                 file=GRAPH_SOURCE,
                 node=node_name,
-                message=(
-                    "edge · route_after_remediation → "
-                    + ("fallback (MISS/unknown)" if misses or any(
-                        isinstance(r, dict) and not r.get("grounded_in") for r in rems
-                    ) else "cookbook (HIT)")
-                ),
+                message=f"edge · route_after_remediation → {dest} "
+                f"(only remediated issues; uncapped extras ignored)",
             )
         )
 

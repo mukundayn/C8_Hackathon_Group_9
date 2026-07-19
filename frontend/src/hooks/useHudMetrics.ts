@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchHudMetrics, type HudMetrics } from "../lib/api";
 
-const POLL_MS = 3000;
+const POLL_MS = 2000;
 
 const EMPTY: HudMetrics = {
   ingest_total: 0,
@@ -10,7 +10,7 @@ const EMPTY: HudMetrics = {
 };
 
 /** Polls cockpit gauge rollups (ingest +1, avg process ms, critical rollup). */
-export function useHudMetrics(enabled: boolean): HudMetrics {
+export function useHudMetrics(enabled: boolean, refreshKey = 0): HudMetrics {
   const [metrics, setMetrics] = useState<HudMetrics>(EMPTY);
 
   useEffect(() => {
@@ -32,7 +32,7 @@ export function useHudMetrics(enabled: boolean): HudMetrics {
       cancelled = true;
       clearInterval(id);
     };
-  }, [enabled]);
+  }, [enabled, refreshKey]);
 
   return metrics;
 }

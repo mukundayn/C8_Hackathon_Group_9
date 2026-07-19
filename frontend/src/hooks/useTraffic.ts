@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { fetchTraffic, type TrafficPoint } from "../lib/api";
 
-const POLL_MS = 5000;
+const POLL_MS = 3000;
 
 /** Polls aggregated traffic buckets derived from the real recent-events buffer. */
-export function useTraffic(enabled: boolean): TrafficPoint[] {
+export function useTraffic(enabled: boolean, refreshKey = 0): TrafficPoint[] {
   const [points, setPoints] = useState<TrafficPoint[]>([]);
 
   useEffect(() => {
@@ -26,7 +26,7 @@ export function useTraffic(enabled: boolean): TrafficPoint[] {
       cancelled = true;
       clearInterval(id);
     };
-  }, [enabled]);
+  }, [enabled, refreshKey]);
 
   return points;
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { UserButton, useAuth } from "@clerk/react";
 import {
   Cpu,
@@ -84,8 +84,8 @@ export default function Dashboard() {
   const { operator } = useOperator();
   const analysis = useAnalysis(operator.expertise);
   const live = useLiveEvents(true);
-  const traffic = useTraffic(true);
-  const hud = useHudMetrics(true);
+  const traffic = useTraffic(true, analysis.runId);
+  const hud = useHudMetrics(true, analysis.runId);
 
   const [sound, setSound] = useState(isSoundEnabled());
   const [clockTime, setClockTime] = useState("");
@@ -100,6 +100,11 @@ export default function Dashboard() {
     slack: "mock",
   });
   const hitlSeededFor = useRef<string | null>(null);
+  /** Session rollups — accumulate across successive files (do not reset per run). */
+  const [sessionKbHits, setSessionKbHits] = useState(0);
+  const [sessionKbLearned, setSessionKbLearned] = useState(0);
+  const [sessionAgentStages, setSessionAgentStages] = useState(0);
+  const rolledUpRunId = useRef(0);
 
   useEffect(() => {
     const update = () => {
@@ -145,8 +150,6 @@ export default function Dashboard() {
     const seedKey = pending.map((p) => p.issue_id).sort().join("|") || null;
     if (!seedKey || seedKey === hitlSeededFor.current) return;
     hitlSeededFor.current = seedKey;
-    setApprovedTickets([]);
-    setApprovedSlack(undefined);
     const now = new Intl.DateTimeFormat("en-GB", {
       timeZone: "Asia/Kolkata",
       hour: "2-digit",
@@ -175,6 +178,23 @@ export default function Dashboard() {
       ),
     );
   }, [analysis.result]);
+
+  // Roll cockpit tiles once per completed analyze (2nd+ files keep accumulating).
+  useLayoutEffect(() => {
+    if (analysis.running || !analysis.result || analysis.runId <= 0) return;
+    if (rolledUpRunId.current === analysis.runId) return;
+    rolledUpRunId.current = analysis.runId;
+
+    const summary = summarizeKbPath(analysis.result);
+    const hits = summary.hits.length;
+    const learned =
+      summary.learned.length || (summary.fallback?.patterns_learned ?? 0);
+    const stagesDone = analysis.agents.filter((a) => a.status === "completed").length;
+
+    setSessionKbHits((n) => n + hits);
+    setSessionKbLearned((n) => n + learned);
+    setSessionAgentStages((n) => n + stagesDone);
+  }, [analysis.running, analysis.result, analysis.runId, analysis.agents]);
 
   const handleApproveHitl = useCallback(
     async (alert: AnomalyAlert) => {
@@ -213,24 +233,39 @@ export default function Dashboard() {
     if (next) playClickPulse();
   };
 
-  const processFile = (file: File) => {
+  /** Clear per-run UI (HITL / boards) before every new file — keep session gauge rollups. */
+  const beginNewAnalysis = useCallback(() => {
+    hitlSeededFor.current = null;
+    setHitlAlerts([]);
+    setApprovedTickets([]);
+    setApprovedSlack(undefined);
     setUploadError(null);
+  }, []);
+
+  const processFile = (file: File) => {
     const ok = /\.(log|txt|json)$/i.test(file.name);
     if (!ok) {
       setUploadError("FORMAT REJECTION: only .log, .txt, or .json files are parsed by Netra.");
       return;
     }
     playSuccessChime();
-    hitlSeededFor.current = null;
-    setHitlAlerts([]);
+    beginNewAnalysis();
     void analysis.runFile(file);
   };
 
+  const runTemplate = (text: string, filename: string) => {
+    playClickPulse();
+    beginNewAnalysis();
+    void analysis.runText(text, filename);
+  };
+
   const completedCount = analysis.agents.filter((a) => a.status === "completed").length;
-  const analysisCritical =
-    analysis.result?.issues?.filter((i) => String(i.severity).toLowerCase() === "critical").length ?? 0;
-  const criticalCount = hud.critical_incidents + analysisCritical;
-  const kbSummary = summarizeKbPath(analysis.result);
+  const criticalCount = hud.critical_incidents;
+  const displayKbHits = sessionKbHits;
+  const displayKbLearned = sessionKbLearned;
+  // While a run is in flight, show session total + stages completed so far this run.
+  const displayAgentStages =
+    sessionAgentStages + (analysis.running ? completedCount : 0);
   const displayTickets = [
     ...(analysis.result?.jira_tickets ?? []),
     ...approvedTickets,
@@ -310,9 +345,9 @@ export default function Dashboard() {
         ingestRate={hud.ingest_total}
         avgResponseMs={hud.avg_response_ms}
         activeAlerts={criticalCount}
-        kbHits={kbSummary.hits.length}
-        kbLearned={kbSummary.learned.length || (kbSummary.fallback?.patterns_learned ?? 0)}
-        agentsCompleted={completedCount}
+        kbHits={displayKbHits}
+        kbLearned={displayKbLearned}
+        agentsCompleted={displayAgentStages}
         agentsTotal={AGENT_ORDER.length}
         pipelineProgress={analysis.progress}
       />
@@ -360,6 +395,7 @@ export default function Dashboard() {
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) processFile(file);
+                  e.target.value = "";
                 }}
                 accept=".log,.txt,.json"
                 className="hidden"
@@ -398,10 +434,7 @@ export default function Dashboard() {
                     type="button"
                     disabled={analysis.running}
                     onMouseEnter={playHoverTick}
-                    onClick={() => {
-                      playClickPulse();
-                      void analysis.runText(tpl.text, tpl.file);
-                    }}
+                    onClick={() => runTemplate(tpl.text, tpl.file)}
                     className="flex items-center justify-between p-2.5 rounded bg-slate-950 border border-slate-800 hover:border-slate-700 hover:bg-slate-900/60 text-[11px] font-mono text-slate-300 hover:text-cyan-300 text-left transition disabled:opacity-50 cursor-pointer"
                   >
                     <span className="truncate">{tpl.name}</span>

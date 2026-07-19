@@ -29,3 +29,30 @@ def test_ungrounded_routes_to_fallback():
         "remediations": [{"issue_id": "c", "grounded_in": []}],
     }
     assert route_after_remediation(state) == "fallback"
+
+
+def test_partial_remediation_cap_still_cookbook_on_hits():
+    """RAG_MAX_ISSUES leaves uncapped issues without rem rows — must not force fallback."""
+    state = {
+        "issues": [
+            {"id": "a", "category": "database"},
+            {"id": "b", "category": "database"},
+            {"id": "c", "category": "network"},
+            {"id": "d", "category": "auth"},
+            {"id": "e", "category": "cache"},
+        ],
+        "remediations": [
+            {"issue_id": "a", "kb_status": "hit", "grounded_in": ["Pool"]},
+            {"issue_id": "b", "kb_status": "hit", "grounded_in": ["Pool"]},
+        ],
+    }
+    assert route_after_remediation(state) == "cookbook"
+
+
+def test_empty_remediations_skip_fallback():
+    assert (
+        route_after_remediation(
+            {"issues": [{"id": "a", "category": "database"}], "remediations": []}
+        )
+        == "cookbook"
+    )

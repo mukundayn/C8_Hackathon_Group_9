@@ -60,6 +60,8 @@ _MAX_EVENTS = 200
 _events: Deque[dict[str, Any]] = deque(maxlen=_MAX_EVENTS)
 _lock = Lock()
 _ingest_total = 0  # lifetime +1 per successfully added log (not capped by ring)
+# Rolling analyze / ingest latencies for the Avg Response tile (not capped by event ring).
+_latency_samples: Deque[int] = deque(maxlen=100)
 
 _SEVERITY_RE = re.compile(
     r"\b(CRITICAL|FATAL|PANIC|ERROR|ERR|FAIL|WARN|WARNING|INFO|DEBUG)\b",
@@ -126,7 +128,23 @@ def add_event(
     with _lock:
         _events.append(event)
         _ingest_total += 1
+        _latency_samples.append(int(event["response_time_ms"]))
     return event
+
+
+def record_analyze_ms(duration_ms: int) -> None:
+    """Record one full /analyze pipeline duration for the Avg Response rollup."""
+    ms = max(1, int(duration_ms))
+    with _lock:
+        _latency_samples.append(ms)
+
+
+def avg_response_ms() -> int:
+    """Mean of recent ingest + analyze latency samples (session rollup)."""
+    with _lock:
+        if not _latency_samples:
+            return 0
+        return round(sum(_latency_samples) / len(_latency_samples))
 
 
 def add_events_from_text(text: str, source: str = "webhook") -> int:
@@ -191,6 +209,7 @@ def clear() -> None:
     with _lock:
         _events.clear()
         _ingest_total = 0
+        _latency_samples.clear()
 
 
 def traffic_points(max_buckets: int = 24) -> list[dict[str, Any]]:

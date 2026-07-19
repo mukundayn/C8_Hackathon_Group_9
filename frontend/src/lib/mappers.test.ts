@@ -38,29 +38,46 @@ describe("flow-chart mappers", () => {
   it("skips dashed image_analyzer when remediation runs without it", () => {
     let agents = initialAgents();
     agents = applyNodeEvent(agents, "classifier");
-    agents = applyNodeEvent(agents, "remediation");
+    agents = applyNodeEvent(agents, "remediation", "done", {
+      remediations: [{ issue_id: "a", kb_status: "hit", grounded_in: ["rb"] }],
+    });
     const img = agents.find((a) => a.id === "image_analyzer");
     expect(img?.status).toBe("completed");
     expect(img?.message).toMatch(/Skipped|optional/i);
   });
 
+  it("on KB HIT after remediation: skips fallback and activates cookbook", () => {
+    let agents = initialAgents();
+    agents = applyNodeEvent(agents, "classifier");
+    agents = applyNodeEvent(agents, "remediation", "HIT", {
+      remediations: [
+        { issue_id: "a", kb_status: "hit", grounded_in: ["Pool runbook"] },
+        { issue_id: "b", kb_status: "hit", grounded_in: ["Pool runbook"] },
+      ],
+    });
+    expect(agents.find((a) => a.id === "fallback")?.status).toBe("completed");
+    expect(agents.find((a) => a.id === "fallback")?.message).toMatch(/Skipped|KB HIT/i);
+    expect(agents.find((a) => a.id === "cookbook")?.status).toBe("active");
+  });
+
+  it("on KB MISS after remediation: activates fallback", () => {
+    let agents = initialAgents();
+    agents = applyNodeEvent(agents, "remediation", "MISS", {
+      remediations: [{ issue_id: "a", kb_status: "miss", grounded_in: [] }],
+    });
+    expect(agents.find((a) => a.id === "fallback")?.status).toBe("active");
+  });
+
   it("marks KB Learn skipped when cookbook runs after a KB HIT", () => {
     let agents = initialAgents();
     agents = applyNodeEvent(agents, "classifier");
-    agents = applyNodeEvent(agents, "remediation");
+    agents = applyNodeEvent(agents, "remediation", "done", {
+      remediations: [{ issue_id: "a", kb_status: "hit", grounded_in: ["rb"] }],
+    });
     agents = applyNodeEvent(agents, "cookbook");
     const learn = agents.find((a) => a.id === "fallback");
     expect(learn?.status).toBe("completed");
     expect(learn?.message).toMatch(/Skipped|KB HIT/i);
-  });
-
-  it("activates KB Learn when fallback node emits", () => {
-    let agents = initialAgents();
-    agents = applyNodeEvent(agents, "remediation");
-    agents = applyNodeEvent(agents, "fallback", "KB MISS → LEARN");
-    const learn = agents.find((a) => a.id === "fallback");
-    expect(learn?.status).toBe("completed");
-    expect(learn?.message).toMatch(/LEARN|MISS/i);
   });
 
   it("ignores unknown node names", () => {

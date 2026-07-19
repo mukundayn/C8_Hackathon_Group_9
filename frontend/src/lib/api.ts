@@ -22,9 +22,17 @@ async function readErrorDetail(res: Response): Promise<string> {
     if (text.includes("<!DOCTYPE html>") || text.includes("<title>Blocked</title>")) {
       return "Edge firewall blocked the request. Retry with JSON analyze (redeploy latest) or a smaller/simpler log.";
     }
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      return (
+        "Backend/proxy unavailable (often Render cold-start, crash, or OpenRouter outage). " +
+        "Check the API is up (`/api/ping`), restart uvicorn/Render, verify OPENROUTER_API_KEY. " +
+        `Upstream said: ${text.replace(/\s+/g, " ").slice(0, 160)}`
+      );
+    }
     try {
-      const json = JSON.parse(text) as { detail?: unknown };
+      const json = JSON.parse(text) as { detail?: unknown; error?: { message?: unknown } };
       if (typeof json.detail === "string") return json.detail;
+      if (typeof json.error?.message === "string") return json.error.message;
       return text.slice(0, 280);
     } catch {
       return text.slice(0, 280);

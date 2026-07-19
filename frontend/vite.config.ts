@@ -23,6 +23,9 @@ export default defineConfig(({ mode }) => {
           target: "http://localhost:8000",
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api/, ""),
+          // Analyze SSE can run several minutes — default proxy timeouts cause 502s.
+          timeout: 0,
+          proxyTimeout: 0,
         },
         "/health": {
           target: "http://localhost:8000",

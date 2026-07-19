@@ -80,6 +80,7 @@ export function applyNodeEvent(
   agents: AgentState[],
   nodeName: string,
   message?: string,
+  update?: Record<string, unknown> | null,
 ): AgentState[] {
   const stage = NODE_TO_STAGE[nodeName];
   if (!stage) return agents;
@@ -87,6 +88,24 @@ export function applyNodeEvent(
   const stageIdx = AGENT_ORDER.indexOf(stage);
   const fallbackIdx = AGENT_ORDER.indexOf("fallback");
   const imageIdx = AGENT_ORDER.indexOf("image_analyzer");
+  const cookbookIdx = AGENT_ORDER.indexOf("cookbook");
+
+  // After remediation, mirror backend route_after_remediation (HIT → cookbook).
+  const remediations = Array.isArray(update?.remediations)
+    ? (update!.remediations as Array<Record<string, unknown>>)
+    : null;
+  const remediationGoesToFallback =
+    nodeName === "remediation" &&
+    remediations !== null &&
+    remediations.length > 0 &&
+    remediations.some(
+      (r) =>
+        r.kb_status === "miss" ||
+        !Array.isArray(r.grounded_in) ||
+        (r.grounded_in as unknown[]).length === 0,
+    );
+  const remediationGoesToCookbook =
+    nodeName === "remediation" && remediations !== null && !remediationGoesToFallback;
 
   return agents.map((a): AgentState => {
     const idx = AGENT_ORDER.indexOf(a.id);
@@ -136,6 +155,37 @@ export function applyNodeEvent(
       };
     }
 
+    // Remediation HIT → skip fallback, light cookbook
+    if (remediationGoesToCookbook) {
+      if (a.id === "fallback") {
+        return {
+          ...a,
+          status: "completed",
+          progress: 100,
+          message: "Skipped — KB HIT (runbooks already grounded).",
+        };
+      }
+      if (a.id === "cookbook") {
+        return {
+          ...a,
+          status: "active",
+          progress: 55,
+          message: `${a.name} running…`,
+        };
+      }
+      return a;
+    }
+
+    // Remediation MISS → light fallback (learn)
+    if (remediationGoesToFallback && a.id === "fallback") {
+      return {
+        ...a,
+        status: "active",
+        progress: 55,
+        message: `${a.name} running…`,
+      };
+    }
+
     // Activate the next primary successor (linear heuristic for "running…" cue).
     // Graph UI also paints edges; this keeps MetricGauges / progress alive.
     if (idx === stageIdx + 1) {
@@ -152,6 +202,18 @@ export function applyNodeEvent(
           message: `${a.name} running…`,
         };
       }
+      // Without update payload, don't assume fallback is next after remediation.
+      if (nodeName === "remediation" && a.id === "fallback" && remediations === null) {
+        return {
+          ...a,
+          status: "active",
+          progress: 40,
+          message: `${a.name} or cookbook next…`,
+        };
+      }
+      if (nodeName === "remediation" && a.id === "fallback" && remediationGoesToCookbook) {
+        return a;
+      }
       return {
         ...a,
         status: "active",
@@ -167,6 +229,19 @@ export function applyNodeEvent(
         status: "active",
         progress: 40,
         message: `${a.name} running… (or waiting on image branch)`,
+      };
+    }
+
+    // After fallback completes, cookbook is not stageIdx+1 (cookbook is +1 from fallback... wait
+    // fallback idx+1 IS cookbook). Good.
+
+    // Warm cookbook when remediation HIT but cookbook wasn't stageIdx+1
+    if (remediationGoesToCookbook && idx === cookbookIdx) {
+      return {
+        ...a,
+        status: "active",
+        progress: 55,
+        message: `${a.name} running…`,
       };
     }
 
