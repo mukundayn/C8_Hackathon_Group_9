@@ -1,6 +1,6 @@
 ﻿"""KB HIT vs MISS routing after remediation."""
 
-from app.graph import route_after_remediation
+from app.routing import route_after_remediation
 
 
 def test_kb_hit_skips_fallback():

@@ -14,10 +14,6 @@ import traceback
 import uuid
 from typing import Any, Literal
 
-from app.graph import graph
-from app.knowledge.confidence import retrieve_with_confidence
-from app.knowledge.query_builder import build_issue_query, build_filters_for_issue
-
 Mode = Literal["full", "rag_only"]
 
 # ── Hardcoded evaluation levels (printed one after another) ───────────────────
@@ -135,6 +131,10 @@ def _fail(msg: str) -> None:
 
 def _rag_for_issue(issue: dict[str, Any]) -> dict[str, Any]:
     """Run real RAG retrieval and print evidence for evaluators."""
+    # Lazy imports so CI can import LEVELS / banners without langgraph / chroma.
+    from app.knowledge.confidence import retrieve_with_confidence
+    from app.knowledge.query_builder import build_issue_query, build_filters_for_issue
+
     query = build_issue_query(issue)
     filters = build_filters_for_issue(issue)
     _step(f"RAG query: {query[:120]}{'…' if len(query) > 120 else ''}")
@@ -171,6 +171,8 @@ def _rag_for_issue(issue: dict[str, Any]) -> dict[str, Any]:
 
 async def _graph_for_logs(log_text: str, label: str) -> dict[str, Any]:
     """Run real LangGraph astream and print each node completion."""
+    from app.graph import graph
+
     thread_id = str(uuid.uuid4())
     initial = {
         "raw_logs": log_text,
