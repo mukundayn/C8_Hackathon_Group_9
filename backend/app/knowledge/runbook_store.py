@@ -165,3 +165,36 @@ def retrieve(
         use_rerank=use_rerank,
     )
     return [doc for doc, _ in scored]
+
+
+def add_documents_chunked(
+    documents: list[Document],
+    chunk_size: int | None = None,
+    overlap: int | None = None,
+) -> int:
+    """Chunk documents (when long), add them to Chroma, and refresh BM25.
+
+    Returns the number of chunks written.
+    """
+    if not documents:
+        return 0
+
+    size = chunk_size if chunk_size is not None else config.RAG_CHUNK_SIZE
+    ov = overlap if overlap is not None else config.RAG_CHUNK_OVERLAP
+
+    try:
+        from app.evals.reranker import rechunk_documents
+
+        chunks = rechunk_documents(documents, chunk_size=size, overlap=ov)
+    except Exception as e:
+        logger.warning("Rechunk failed (%s); adding originals.", e)
+        chunks = documents
+
+    # Preserve original title for dedupe in hf_datasets ingest.
+    for chunk in chunks:
+        if "original_title" not in chunk.metadata:
+            chunk.metadata["original_title"] = chunk.metadata.get("title", "")
+
+    get_store().add_documents(chunks)
+    _rebuild_bm25_from_store()
+    return len(chunks)
