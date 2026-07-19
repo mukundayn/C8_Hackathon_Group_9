@@ -73,7 +73,14 @@ function edgePath(from: LayoutNode, to: LayoutNode): string {
 }
 
 function statusOf(agents: AgentState[], id: GraphNodeId): AgentState["status"] | "terminal" {
-  if (id === "START" || id === "END") return "terminal";
+  if (id === "START") {
+    const started = agents.some((a) => a.status !== "idle");
+    return started ? "completed" : "terminal";
+  }
+  if (id === "END") {
+    const notifier = agents.find((a) => a.id === "notifier");
+    return notifier?.status === "completed" ? "completed" : "terminal";
+  }
   return agents.find((a) => a.id === id)?.status ?? "idle";
 }
 
@@ -212,13 +219,34 @@ export default function FlowChart({ agents, overallProgress, debugLines = [] }: 
             const st = statusOf(agents, n.id);
             const agent = n.id !== "START" && n.id !== "END" ? agents.find((a) => a.id === n.id) : undefined;
             const rx = n.terminal ? n.h / 2 : 8;
+            const isActive = st === "active";
+            const isDone = st === "completed";
+            const wasSkipped = Boolean(agent?.message?.startsWith("Skipped"));
+            // Optional nodes (image_analyzer) stay unticked when the branch was not taken.
+            const showTick = isDone && !(n.optional && wasSkipped);
             return (
               <g
                 key={n.id}
                 id={`agent-${n.id}`}
+                className={isActive ? "lg-node-active" : undefined}
                 onMouseEnter={playHoverTick}
                 style={{ cursor: "default" }}
               >
+                {isActive && (
+                  <rect
+                    className="lg-node-active-ring"
+                    x={n.x - 4}
+                    y={n.y - 4}
+                    width={n.w + 8}
+                    height={n.h + 8}
+                    rx={rx + 2}
+                    ry={rx + 2}
+                    fill="none"
+                    stroke="#22d3ee"
+                    strokeWidth={1.5}
+                    opacity={0.7}
+                  />
+                )}
                 <rect
                   x={n.x}
                   y={n.y}
@@ -226,9 +254,13 @@ export default function FlowChart({ agents, overallProgress, debugLines = [] }: 
                   height={n.h}
                   rx={rx}
                   ry={rx}
-                  fill={nodeFill(st)}
-                  stroke={nodeStroke(st, n.optional)}
-                  strokeWidth={st === "active" ? 2.2 : 1.6}
+                  fill={wasSkipped && n.optional ? nodeFill("idle") : nodeFill(st)}
+                  stroke={
+                    wasSkipped && n.optional
+                      ? nodeStroke("idle", true)
+                      : nodeStroke(st, n.optional)
+                  }
+                  strokeWidth={isActive ? 2.4 : showTick ? 2 : 1.6}
                   strokeDasharray={n.optional ? "5 3" : undefined}
                 />
                 <text
@@ -240,7 +272,8 @@ export default function FlowChart({ agents, overallProgress, debugLines = [] }: 
                     fontSize: n.terminal ? 11 : 12,
                     fontFamily: "ui-monospace, monospace",
                     fontWeight: 700,
-                    fill: st === "completed" ? "#6ee7b7" : st === "active" ? "#67e8f8" : "#94a3b8",
+                    fill:
+                      showTick ? "#6ee7b7" : isActive ? "#67e8f8" : "#94a3b8",
                   }}
                 >
                   {n.label}
@@ -250,20 +283,40 @@ export default function FlowChart({ agents, overallProgress, debugLines = [] }: 
                     x={n.x + n.w / 2}
                     y={n.y + n.h / 2 + 12}
                     textAnchor="middle"
-                    style={{ fontSize: 9, fontFamily: "ui-monospace, monospace", fill: "#64748b" }}
+                    style={{
+                      fontSize: 9,
+                      fontFamily: "ui-monospace, monospace",
+                      fill: isActive ? "#22d3ee" : "#64748b",
+                    }}
                   >
                     {st === "active"
-                      ? "RUNNING"
-                      : st === "completed"
-                        ? agent.message.startsWith("Skipped")
-                          ? "SKIPPED"
-                          : "DONE"
-                        : st === "failed"
-                          ? "FAILED"
-                          : n.optional
-                            ? "OPTIONAL"
-                            : "PENDING"}
+                      ? "RUNNING…"
+                      : wasSkipped && n.optional
+                        ? "NOT USED"
+                        : st === "completed"
+                          ? agent.message.startsWith("Skipped")
+                            ? "SKIPPED"
+                            : "DONE"
+                          : st === "failed"
+                            ? "FAILED"
+                            : n.optional
+                              ? "OPTIONAL"
+                              : "PENDING"}
                   </text>
+                )}
+                {/* Green tick only when the node actually ran (not skipped optional). */}
+                {showTick && (
+                  <g transform={`translate(${n.x + n.w - 2}, ${n.y - 2})`} aria-label="completed">
+                    <circle r="9" fill="#059669" stroke="#6ee7b7" strokeWidth="1.5" />
+                    <path
+                      d="M-4 0.5 L-1.2 3.2 L4.5 -3.5"
+                      fill="none"
+                      stroke="#ecfdf5"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </g>
                 )}
               </g>
             );
@@ -273,13 +326,18 @@ export default function FlowChart({ agents, overallProgress, debugLines = [] }: 
 
       <div className="mt-3 flex flex-wrap gap-3 text-[9px] font-mono text-slate-500">
         <span className="flex items-center gap-1">
-          <span className="inline-block w-3 h-3 rounded-sm border border-emerald-500 bg-emerald-950" /> DONE
+          <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-emerald-600 text-[8px] text-white">
+            ✓
+          </span>{" "}
+          DONE (+ green tick)
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block w-3 h-3 rounded-sm border border-cyan-400 bg-cyan-950" /> RUNNING
+          <span className="inline-block w-3 h-3 rounded-sm border border-cyan-400 bg-cyan-950 animate-pulse" />{" "}
+          RUNNING (blinks)
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block w-3 h-3 rounded-sm border border-dashed border-slate-500 bg-slate-950" /> OPTIONAL
+          <span className="inline-block w-3 h-3 rounded-sm border border-dashed border-slate-500 bg-slate-950" />{" "}
+          OPTIONAL
         </span>
         <span className="ml-auto">SOURCE: graph.astream · edges from backend/app/graph.py</span>
       </div>

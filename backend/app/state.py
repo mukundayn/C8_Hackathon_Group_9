@@ -32,6 +32,8 @@ class IncidentState(TypedDict, total=False):
     cookbook: dict[str, Any]
     jira_tickets: list[dict[str, Any]]
     slack_result: dict[str, Any]
+    # Newly-learned critical/high awaiting operator approve before Jira/Slack
+    hitl_pending: list[dict[str, Any]]
 
     # fallback node
     fallback_results: dict[str, Any] | None

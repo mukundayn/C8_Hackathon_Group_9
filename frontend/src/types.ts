@@ -102,6 +102,19 @@ export interface SlackResult {
   text_preview: string;
 }
 
+/** Pending HITL item — newly learned critical/high awaiting approve → Jira/Slack. */
+export interface HitlPending {
+  issue_id: string;
+  title?: string;
+  severity?: string;
+  affected_service?: string;
+  summary?: string;
+  category?: string;
+  kb_status?: KbStatus;
+  fix_summary?: string;
+  suggested_command?: string;
+}
+
 /** The final state object emitted by the `done` SSE event. */
 export interface AnalysisResult {
   issues?: Issue[];
@@ -109,6 +122,7 @@ export interface AnalysisResult {
   cookbook?: Cookbook;
   jira_tickets?: JiraTicket[];
   slack_result?: SlackResult;
+  hitl_pending?: HitlPending[];
   image_analysis?: Record<string, unknown> | null;
   fallback_results?: FallbackResults | null;
 }
@@ -193,6 +207,11 @@ export interface AnomalyAlert {
   resolved: boolean;
   service?: string;
   threatIndex: number;
+  /** Human-in-the-loop for newly learned criticals before Jira/Slack. */
+  hitl?: boolean;
+  hitlIssueId?: string;
+  hitlStatus?: "pending" | "approved" | "rejected";
+  title?: string;
 }
 
 /** Raw event shape returned by GET /api/events/recent. */

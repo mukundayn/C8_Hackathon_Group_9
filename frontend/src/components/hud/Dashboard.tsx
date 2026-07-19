@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { UserButton, useAuth } from "@clerk/react";
 import {
   Cpu,
@@ -17,8 +17,12 @@ import {
 import { useAnalysis } from "../../hooks/useAnalysis";
 import { useLiveEvents } from "../../hooks/useLiveEvents";
 import { useTraffic } from "../../hooks/useTraffic";
+import { useHudMetrics } from "../../hooks/useHudMetrics";
 import { useOperator } from "../../hooks/useOperator";
 import { AGENT_ORDER } from "../../lib/mappers";
+import { summarizeKbPath } from "../../lib/kbPath";
+import { approveHitl } from "../../lib/api";
+import type { AnomalyAlert, JiraTicket, SlackResult } from "../../types";
 import {
   isSoundEnabled,
   setSoundEnabled,
@@ -81,18 +85,84 @@ export default function Dashboard() {
   const analysis = useAnalysis(operator.expertise);
   const live = useLiveEvents(true);
   const traffic = useTraffic(true);
+  const hud = useHudMetrics(true);
 
   const [sound, setSound] = useState(isSoundEnabled());
   const [clockTime, setClockTime] = useState("");
   const [dragActive, setDragActive] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [hitlAlerts, setHitlAlerts] = useState<AnomalyAlert[]>([]);
+  const [approvedTickets, setApprovedTickets] = useState<JiraTicket[]>([]);
+  const [approvedSlack, setApprovedSlack] = useState<SlackResult | undefined>();
+  const hitlSeededFor = useRef<string | null>(null);
 
   useEffect(() => {
     const update = () => setClockTime(new Date().toISOString().replace("T", "  ").substring(0, 21) + " UTC");
     update();
     const id = setInterval(update, 1000);
     return () => clearInterval(id);
+  }, []);
+
+  // Seed HITL threat alerts when analysis finishes with newly-learned criticals.
+  useEffect(() => {
+    const pending = analysis.result?.hitl_pending ?? [];
+    const seedKey = pending.map((p) => p.issue_id).sort().join("|") || null;
+    if (!seedKey || seedKey === hitlSeededFor.current) return;
+    hitlSeededFor.current = seedKey;
+    setApprovedTickets([]);
+    setApprovedSlack(undefined);
+    const now = new Date().toISOString().slice(11, 19);
+    setHitlAlerts(
+      pending.map(
+        (p): AnomalyAlert => ({
+          id: `hitl-${p.issue_id}`,
+          timestamp: now,
+          severity: "CRITICAL",
+          message:
+            p.summary ||
+            p.fix_summary ||
+            `Newly learned pattern for ${p.title ?? p.issue_id}. Approve to open Jira + Slack.`,
+          resolved: false,
+          service: p.affected_service,
+          threatIndex: 9.4,
+          hitl: true,
+          hitlIssueId: p.issue_id,
+          hitlStatus: "pending",
+          title: p.title,
+        }),
+      ),
+    );
+  }, [analysis.result]);
+
+  const handleApproveHitl = useCallback(
+    async (alert: AnomalyAlert) => {
+      const result = analysis.result;
+      if (!result || !alert.hitlIssueId) return;
+      const res = await approveHitl({
+        issue_ids: [alert.hitlIssueId],
+        pending: (result.hitl_pending ?? []) as unknown as Array<Record<string, unknown>>,
+        issues: (result.issues ?? []) as unknown as Array<Record<string, unknown>>,
+        remediations: (result.remediations ?? []) as unknown as Array<Record<string, unknown>>,
+        operator_expertise: operator.expertise,
+        cookbook: (result.cookbook ?? null) as Record<string, unknown> | null,
+        learned_issue_ids: result.fallback_results?.learned_issue_ids,
+      });
+      setApprovedTickets((prev) => [...prev, ...(res.jira_tickets ?? [])]);
+      if (res.slack_result) setApprovedSlack(res.slack_result);
+      setHitlAlerts((prev) =>
+        prev.map((a) =>
+          a.id === alert.id ? { ...a, hitlStatus: "approved", resolved: true } : a,
+        ),
+      );
+    },
+    [analysis.result, operator.expertise],
+  );
+
+  const handleRejectHitl = useCallback((alert: AnomalyAlert) => {
+    setHitlAlerts((prev) =>
+      prev.map((a) => (a.id === alert.id ? { ...a, hitlStatus: "rejected", resolved: true } : a)),
+    );
   }, []);
 
   const handleSoundToggle = () => {
@@ -110,18 +180,34 @@ export default function Dashboard() {
       return;
     }
     playSuccessChime();
+    hitlSeededFor.current = null;
+    setHitlAlerts([]);
     void analysis.runFile(file);
   };
 
   const completedCount = analysis.agents.filter((a) => a.status === "completed").length;
-  const criticalCount = analysis.result?.issues?.filter((i) => i.severity === "critical").length ?? 0;
+  const analysisCritical =
+    analysis.result?.issues?.filter((i) => String(i.severity).toLowerCase() === "critical").length ?? 0;
+  const criticalCount = hud.critical_incidents + analysisCritical;
+  const kbSummary = summarizeKbPath(analysis.result);
+  const displayTickets = [
+    ...(analysis.result?.jira_tickets ?? []),
+    ...approvedTickets,
+  ];
+  const displaySlack = approvedSlack ?? analysis.result?.slack_result;
+  const mergedAlerts = [...hitlAlerts.filter((a) => !a.resolved), ...live.alerts];
 
   return (
     <div className="relative min-h-screen bg-[#060814] text-gray-300 font-sans p-4 lg:p-6 overflow-x-hidden">
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#0c102b_1px,transparent_1px),linear-gradient(to_bottom,#0c102b_1px,transparent_1px)] bg-[size:3rem_3rem] opacity-35" />
       <div className="absolute top-0 left-0 w-full h-0.5 bg-cyan-400/80 animate-pulse z-20" />
 
-      <AlertNotification alerts={live.alerts} onDismiss={live.dismissAlert} />
+      <AlertNotification
+        alerts={mergedAlerts}
+        onDismiss={live.dismissAlert}
+        onApproveHitl={handleApproveHitl}
+        onRejectHitl={handleRejectHitl}
+      />
 
       {/* Header */}
       <header className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-900/60 border border-slate-800 rounded-2xl p-5 mb-6 backdrop-blur-md shadow-2xl">
@@ -180,13 +266,11 @@ export default function Dashboard() {
       </header>
 
       <MetricGauges
-        ingestRate={live.logs.length}
-        avgResponseMs={
-          live.logs.length
-            ? Math.round(live.logs.reduce((a, c) => a + c.responseTime, 0) / live.logs.length)
-            : 0
-        }
-        activeAlerts={live.alerts.filter((a) => !a.resolved).length}
+        ingestRate={hud.ingest_total}
+        avgResponseMs={hud.avg_response_ms}
+        activeAlerts={criticalCount}
+        kbHits={kbSummary.hits.length}
+        kbLearned={kbSummary.learned.length || (kbSummary.fallback?.patterns_learned ?? 0)}
         agentsCompleted={completedCount}
         agentsTotal={AGENT_ORDER.length}
         pipelineProgress={analysis.progress}
@@ -318,7 +402,7 @@ export default function Dashboard() {
               Integration Shield & Automated Routing Hub
             </h2>
             <p className="text-xs text-slate-400 mt-1">
-              MCP Slack notifications and expertise-routed Jira ticketing from the real pipeline.
+              Jira + Slack only after HITL approve on newly learned criticals. KB HIT skips ticketing.
             </p>
           </div>
           <div className="flex items-center gap-1.5 px-3 py-1 bg-cyan-950/20 border border-cyan-800/40 rounded-lg text-[10px] font-mono text-cyan-300">
@@ -328,8 +412,8 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-          <SlackBoard slack={analysis.result?.slack_result} />
-          <JiraBoard tickets={analysis.result?.jira_tickets ?? []} />
+          <SlackBoard slack={displaySlack && Object.keys(displaySlack).length ? displaySlack : undefined} />
+          <JiraBoard tickets={displayTickets} />
           <WebhookConnector expertise={operator.expertise} connected={live.connected} />
         </div>
       </section>

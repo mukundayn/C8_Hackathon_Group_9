@@ -1,0 +1,211 @@
+{
+  "name": "Netra · Log Simulator → Live Ingest",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Drop-in HTTP config for Netra free-tier Render. Replace YOUR_RENDER_HOST. All severities POST to /api/webhook/logs (no Render paid webhooks needed)."
+  },
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start",
+      "name": "When clicking ‘Test workflow’",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Demo: emit one event per severity (swap for your GitHub + Parse nodes)\nconst now = new Date().toISOString();\nreturn [\n  { json: { severity: 'CRITICAL', service: 'database-service', category: 'Database', message: `CRITICAL [${now}] database-service: PostgreSQL connection pool exhausted`, response_time_ms: 890 } },\n  { json: { severity: 'HIGH', service: 'api-gateway', category: 'API', message: `ERROR [${now}] api-gateway: Internal Server Error 500 on GET /api/v1/users`, response_time_ms: 420 } },\n  { json: { severity: 'MEDIUM', service: 'auth-service', category: 'Auth', message: `WARN [${now}] auth-service: JWT verification latency elevated`, response_time_ms: 210 } },\n  { json: { severity: 'LOW', service: 'cache', category: 'System', message: `INFO [${now}] cache: redis hit ratio 0.97`, response_time_ms: 40 } },\n];"
+      },
+      "id": "parse",
+      "name": "Parse Log Entries (demo)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "loose" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.severity }}",
+                    "rightValue": "CRITICAL",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "critical"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "loose" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.severity }}",
+                    "rightValue": "HIGH",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "high"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "loose" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.severity }}",
+                    "rightValue": "MEDIUM",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "medium"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "loose" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.severity }}",
+                    "rightValue": "LOW",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "low"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "none" }
+      },
+      "id": "route",
+      "name": "Route by Category",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://incident-suite-r173.onrender.com/api/webhook/logs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Accept", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"source\": \"n8n\",\n  \"message\": {{ JSON.stringify($json.message) }},\n  \"severity\": {{ JSON.stringify($json.severity) }},\n  \"service\": {{ JSON.stringify($json.service || 'n8n') }},\n  \"category\": {{ JSON.stringify($json.category || 'System') }},\n  \"response_time_ms\": {{ Number($json.response_time_ms) || 100 }}\n}",
+        "options": {
+          "timeout": 90000,
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "id": "send-critical",
+      "name": "Send Critical → Netra",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [780, 0],
+      "notes": "Same URL for all severities. Live Console + gauges + traffic. Free Render: allow 90s timeout for cold start."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://incident-suite-r173.onrender.com/api/webhook/logs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Accept", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"source\": \"n8n\",\n  \"message\": {{ JSON.stringify($json.message) }},\n  \"severity\": {{ JSON.stringify($json.severity) }},\n  \"service\": {{ JSON.stringify($json.service || 'n8n') }},\n  \"category\": {{ JSON.stringify($json.category || 'System') }},\n  \"response_time_ms\": {{ Number($json.response_time_ms) || 100 }}\n}",
+        "options": { "timeout": 90000 }
+      },
+      "id": "send-high",
+      "name": "Send High → Netra",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [780, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://incident-suite-r173.onrender.com/api/webhook/logs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Accept", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"source\": \"n8n\",\n  \"message\": {{ JSON.stringify($json.message) }},\n  \"severity\": {{ JSON.stringify($json.severity) }},\n  \"service\": {{ JSON.stringify($json.service || 'n8n') }},\n  \"category\": {{ JSON.stringify($json.category || 'System') }},\n  \"response_time_ms\": {{ Number($json.response_time_ms) || 100 }}\n}",
+        "options": { "timeout": 90000 }
+      },
+      "id": "send-medium",
+      "name": "Send Medium → Netra",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [780, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://incident-suite-r173.onrender.com/api/webhook/logs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Accept", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"source\": \"n8n\",\n  \"message\": {{ JSON.stringify($json.message) }},\n  \"severity\": {{ JSON.stringify($json.severity) }},\n  \"service\": {{ JSON.stringify($json.service || 'n8n') }},\n  \"category\": {{ JSON.stringify($json.category || 'System') }},\n  \"response_time_ms\": {{ Number($json.response_time_ms) || 100 }}\n}",
+        "options": { "timeout": 90000 }
+      },
+      "id": "send-low",
+      "name": "Send Low → Netra",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [780, 600]
+    }
+  ],
+  "connections": {
+    "When clicking ‘Test workflow’": {
+      "main": [[{ "node": "Parse Log Entries (demo)", "type": "main", "index": 0 }]]
+    },
+    "Parse Log Entries (demo)": {
+      "main": [[{ "node": "Route by Category", "type": "main", "index": 0 }]]
+    },
+    "Route by Category": {
+      "main": [
+        [{ "node": "Send Critical → Netra", "type": "main", "index": 0 }],
+        [{ "node": "Send High → Netra", "type": "main", "index": 0 }],
+        [{ "node": "Send Medium → Netra", "type": "main", "index": 0 }],
+        [{ "node": "Send Low → Netra", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}

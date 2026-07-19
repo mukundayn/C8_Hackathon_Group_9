@@ -80,3 +80,26 @@ body {
     transform: rotate(360deg);
   }
 }
+
+/* LangGraph flowchart — active node blink */
+@keyframes lg-node-blink {
+  0%,
+  100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 4px rgba(34, 211, 238, 0.35));
+  }
+  50% {
+    opacity: 0.45;
+    filter: drop-shadow(0 0 10px rgba(34, 211, 238, 0.75));
+  }
+}
+
+.lg-node-active {
+  animation: lg-node-blink 0.9s ease-in-out infinite;
+}
+
+.lg-node-active-ring {
+  animation: lg-node-blink 0.9s ease-in-out infinite;
+  transform-origin: center;
+  transform-box: fill-box;
+}

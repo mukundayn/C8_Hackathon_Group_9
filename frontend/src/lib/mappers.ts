@@ -43,8 +43,8 @@ const AGENT_META: Record<AgentId, { name: string; role: string; optional?: boole
     role: "KB MISS — learn into Chroma for future retrieval",
   },
   cookbook: { name: "cookbook", role: "Assemble an actionable incident checklist" },
-  jira: { name: "jira", role: "File & route tickets for critical/high issues" },
-  notifier: { name: "notifier", role: "Post the incident summary (mock Slack)" },
+  jira: { name: "jira", role: "HITL gate — newly learned criticals await approve" },
+  notifier: { name: "notifier", role: "Slack only after HITL-approved Jira tickets" },
 };
 
 export function initialAgents(): AgentState[] {

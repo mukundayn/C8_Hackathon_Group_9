@@ -9,6 +9,7 @@ import {
   Link2,
   GraduationCap,
   Target,
+  Sparkles,
 } from "lucide-react";
 import type {
   AnalysisResult,
@@ -59,12 +60,16 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+/** Diagnosis only — what broke (separate from KB path / learn). */
 function IssuesSection({ issues }: { issues: Issue[] }) {
   return (
-    <div className="space-y-2">
+    <section className="space-y-2 border border-slate-800/80 rounded-xl p-3 bg-slate-950/40">
       <div className="text-[9px] font-mono text-cyan-400 uppercase tracking-widest">
         Detected Root Causes ({issues.length})
       </div>
+      <p className="text-[10px] text-slate-500 leading-relaxed">
+        Classifier findings — diagnosis only. KB grounding lives in Knowledge Base Path.
+      </p>
       {issues.map((issue) => (
         <div key={issue.id} className="p-3 bg-slate-900 border border-slate-800 rounded-lg">
           <div className="flex justify-between items-start gap-2">
@@ -79,7 +84,7 @@ function IssuesSection({ issues }: { issues: Issue[] }) {
           </div>
         </div>
       ))}
-    </div>
+    </section>
   );
 }
 
@@ -93,21 +98,25 @@ function kbBadge(r: Remediation): { label: string; cls: string } {
   return { label: "KB MISS", cls: "bg-amber-950 text-amber-300 border-amber-700" };
 }
 
+/** RAG memory path — HIT / MISS / LEARN (separate from root causes). */
 function KnowledgePathSection({ result }: { result: AnalysisResult }) {
   const summary = summarizeKbPath(result);
   return (
-    <div className="space-y-2">
+    <section className="space-y-2 border border-cyan-900/40 rounded-xl p-3 bg-cyan-950/10">
       <div className="text-[9px] font-mono text-cyan-400 uppercase tracking-widest flex items-center gap-1">
         <Target className="w-3 h-3" /> Knowledge Base Path
       </div>
+      <p className="text-[10px] text-slate-500 leading-relaxed">
+        Did we already know the fix (HIT) or write a new pattern into Chroma (LEARN)?
+      </p>
       <div className="p-3 bg-slate-900 border border-cyan-900/50 rounded-lg">
         <p className="text-[11px] text-white font-medium">{summary.label}</p>
         <div className="mt-2 flex flex-wrap gap-2 text-[9px] font-mono">
           <span className="px-1.5 py-0.5 rounded border border-emerald-800 text-emerald-400">
-            HIT {summary.hits.length}
+            KNOWN HIT {summary.hits.length}
           </span>
           <span className="px-1.5 py-0.5 rounded border border-violet-800 text-violet-300">
-            LEARNED {summary.learned.length}
+            NEWLY LEARNED {summary.learned.length}
           </span>
           {summary.misses.length > 0 && (
             <span className="px-1.5 py-0.5 rounded border border-amber-800 text-amber-300">
@@ -115,25 +124,59 @@ function KnowledgePathSection({ result }: { result: AnalysisResult }) {
             </span>
           )}
         </div>
-        {summary.learnedIntoKb && summary.fallback && (
-          <div className="mt-2 text-[10px] text-violet-300/90 leading-relaxed flex gap-1.5">
-            <GraduationCap className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-            <span>
-              Fallback wrote {summary.fallback.patterns_learned ?? 0} pattern(s) into Chroma
-              {summary.fallback.learned_titles?.length
-                ? `: ${summary.fallback.learned_titles.slice(0, 3).join("; ")}`
-                : "."}
-              {" "}Future similar incidents can retrieve them (KB HIT).
-            </span>
-          </div>
-        )}
         {!summary.learnedIntoKb && summary.hits.length > 0 && (
           <p className="mt-2 text-[10px] text-emerald-400/90 leading-relaxed">
-            Remediator found matching runbooks — Learn stage skipped.
+            Remediator found matching runbooks — Learn stage skipped. No Jira/Slack required.
           </p>
         )}
       </div>
-    </div>
+    </section>
+  );
+}
+
+/** Explicit strip of patterns written to the vector store this run. */
+function NewlyLearnedSection({ result }: { result: AnalysisResult }) {
+  const summary = summarizeKbPath(result);
+  if (!summary.learnedIntoKb && summary.learned.length === 0) return null;
+
+  const titles =
+    summary.fallback?.learned_titles?.filter(Boolean) ??
+    summary.learned.map((r) => r.fix_summary).filter(Boolean);
+
+  return (
+    <section className="space-y-2 border border-violet-800/50 rounded-xl p-3 bg-violet-950/15">
+      <div className="text-[9px] font-mono text-violet-300 uppercase tracking-widest flex items-center gap-1">
+        <GraduationCap className="w-3 h-3" /> Newly Learned
+      </div>
+      <p className="text-[10px] text-slate-500 leading-relaxed">
+        Patterns written into Chroma this run. Critical ones need HITL before Jira/Slack.
+      </p>
+      <div className="p-3 bg-slate-900 border border-violet-800/40 rounded-lg space-y-2">
+        <div className="flex items-center gap-1.5 text-[10px] text-violet-200">
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>
+            Fallback wrote {summary.fallback?.patterns_learned ?? summary.learned.length} pattern(s)
+            into the knowledge base.
+          </span>
+        </div>
+        <ul className="space-y-1.5">
+          {(titles.length ? titles : ["(untitled learned pattern)"]).slice(0, 6).map((t, i) => (
+            <li
+              key={`${t}-${i}`}
+              className="text-[11px] text-white pl-2 border-l-2 border-violet-500 leading-snug"
+            >
+              {t}
+            </li>
+          ))}
+        </ul>
+        {(result.hitl_pending?.length ?? 0) > 0 && (
+          <p className="text-[9px] font-mono text-amber-300 pt-1 border-t border-slate-800">
+            HITL PENDING: {result.hitl_pending!.length} critical/high — approve threat alerts to open
+            Jira + Slack.
+          </p>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -246,6 +289,7 @@ export default function ResultsPanel({ result, trace, running }: ResultsPanelPro
         ) : (
           <div className="space-y-5">
             {result && <KnowledgePathSection result={result} />}
+            {result && <NewlyLearnedSection result={result} />}
             {result?.issues && result.issues.length > 0 && <IssuesSection issues={result.issues} />}
             {result?.remediations && result.remediations.length > 0 && (
               <RemediationsSection remediations={result.remediations} />

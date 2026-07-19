@@ -16,12 +16,20 @@ interface TrafficChartProps {
   points: TrafficPoint[];
 }
 
+const SEV_TICKS = [1, 2, 3, 4];
+const SEV_LABEL: Record<number, string> = {
+  1: "INFO",
+  2: "WARN",
+  3: "ERROR",
+  4: "CRIT",
+};
+
 export default function TrafficChart({ points }: TrafficChartProps) {
   const chartData = points.map((p) => ({
     time: p.time,
-    "Requests (Volume)": p.requests,
+    "Volume /sec": p.volume_per_sec ?? p.requests,
     "Errors (Fails)": p.errors,
-    "Response Time (ms)": p.avg_response_ms,
+    Severity: p.avg_severity ?? 0,
   }));
 
   return (
@@ -38,7 +46,7 @@ export default function TrafficChart({ points }: TrafficChartProps) {
             Vectored Network Traffic Analytics
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Aggregated from the live ingestion buffer (real webhook events).
+            Volume/sec (left) + severity rollup (right) from the live ingestion buffer.
           </p>
         </div>
       </div>
@@ -50,7 +58,7 @@ export default function TrafficChart({ points }: TrafficChartProps) {
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+            <AreaChart data={chartData} margin={{ top: 10, right: 8, left: -10, bottom: 0 }}>
               <defs>
                 <linearGradient id="colorRequests" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.3} />
@@ -63,8 +71,40 @@ export default function TrafficChart({ points }: TrafficChartProps) {
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#0f172a" opacity={0.3} />
               <XAxis dataKey="time" stroke="#475569" fontSize={10} fontFamily="monospace" tickLine={false} />
-              <YAxis yAxisId="left" stroke="#06b6d4" fontSize={10} fontFamily="monospace" tickLine={false} axisLine={false} />
-              <YAxis yAxisId="right" orientation="right" stroke="#ec4899" fontSize={10} fontFamily="monospace" tickLine={false} axisLine={false} />
+              <YAxis
+                yAxisId="left"
+                stroke="#06b6d4"
+                fontSize={10}
+                fontFamily="monospace"
+                tickLine={false}
+                axisLine={false}
+                label={{
+                  value: "vol/s",
+                  angle: -90,
+                  position: "insideLeft",
+                  offset: 18,
+                  style: { fill: "#06b6d4", fontSize: 9, fontFamily: "monospace" },
+                }}
+              />
+              <YAxis
+                yAxisId="right"
+                orientation="right"
+                stroke="#f59e0b"
+                fontSize={10}
+                fontFamily="monospace"
+                tickLine={false}
+                axisLine={false}
+                domain={[1, 4]}
+                ticks={SEV_TICKS}
+                tickFormatter={(v: number) => SEV_LABEL[v] ?? String(v)}
+                label={{
+                  value: "severity",
+                  angle: 90,
+                  position: "insideRight",
+                  offset: 4,
+                  style: { fill: "#f59e0b", fontSize: 9, fontFamily: "monospace" },
+                }}
+              />
               <Tooltip
                 contentStyle={{
                   backgroundColor: "#020617",
@@ -75,12 +115,19 @@ export default function TrafficChart({ points }: TrafficChartProps) {
                   color: "#e2e8f0",
                 }}
                 cursor={{ stroke: "#0f172a", strokeWidth: 1 }}
+                formatter={(value: number, name: string) => {
+                  if (name === "Severity") {
+                    const rounded = Math.round(value);
+                    return [`${value.toFixed(2)} (${SEV_LABEL[rounded] ?? "?"})`, name];
+                  }
+                  return [value, name];
+                }}
               />
               <Legend wrapperStyle={{ fontSize: "10px", fontFamily: "monospace", marginTop: "10px" }} iconType="circle" />
               <Area
                 yAxisId="left"
                 type="monotone"
-                dataKey="Requests (Volume)"
+                dataKey="Volume /sec"
                 stroke="#06b6d4"
                 fillOpacity={1}
                 fill="url(#colorRequests)"
@@ -100,11 +147,11 @@ export default function TrafficChart({ points }: TrafficChartProps) {
               <Line
                 yAxisId="right"
                 type="monotone"
-                dataKey="Response Time (ms)"
-                stroke="#d946ef"
-                strokeWidth={1.5}
-                dot={false}
-                activeDot={{ r: 4, strokeWidth: 0, fill: "#f472b6" }}
+                dataKey="Severity"
+                stroke="#f59e0b"
+                strokeWidth={2}
+                dot={{ r: 3, fill: "#fbbf24", strokeWidth: 0 }}
+                activeDot={{ r: 5, strokeWidth: 0, fill: "#fbbf24" }}
               />
             </AreaChart>
           </ResponsiveContainer>
@@ -113,7 +160,7 @@ export default function TrafficChart({ points }: TrafficChartProps) {
 
       <div className="mt-4 border-t border-cyan-500/10 pt-3 flex justify-between items-center text-[9px] font-mono text-gray-500">
         <span>SAMPLE BUCKETS: {chartData.length}</span>
-        <span>SOURCE: /api/metrics/traffic</span>
+        <span>SOURCE: /api/metrics/traffic · Y: vol/s + severity</span>
       </div>
     </div>
   );

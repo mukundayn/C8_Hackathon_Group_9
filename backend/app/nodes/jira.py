@@ -1,7 +1,18 @@
-from app.state import IncidentState
+"""Jira integration — tickets only after HITL approve for newly-learned criticals.
+
+Pipeline `jira_node` no longer auto-creates tickets. KB HIT / known issues skip
+Jira entirely. Newly learned critical/high issues are listed in `hitl_pending`
+for operator approval; `create_tickets_for_issues` is called from the HITL API.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
 from app.integrations.jira_client import MockJiraClient
 from app.live_store import expertise_for_category
 from app.nodes._trace import trace_event
+from app.state import IncidentState
 
 CRITICAL = {"critical", "high"}
 
@@ -15,35 +26,85 @@ _SPECIALIST_QUEUE = {
 }
 
 
-def jira_node(state: IncidentState) -> dict:
-    client = MockJiraClient()
-    issues = [i for i in state.get("issues", []) if i["severity"] in CRITICAL]
-    rem_by_id = {r["issue_id"]: r for r in state.get("remediations", [])}
-    operator_expertise = {str(e).strip() for e in state.get("operator_expertise", []) if str(e).strip()}
+def _is_learned(rem: dict[str, Any] | None) -> bool:
+    if not rem:
+        return False
+    if rem.get("kb_status") == "learned" or rem.get("fallback"):
+        return True
+    return False
 
-    tickets = []
+
+def pending_hitl_issues(
+    issues: list[dict[str, Any]],
+    remediations: list[dict[str, Any]],
+    learned_issue_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Critical/high issues that were newly learned → require HITL before Jira/Slack."""
+    rem_by_id = {r.get("issue_id"): r for r in remediations if isinstance(r, dict)}
+    learned_ids = set(learned_issue_ids or [])
+    pending: list[dict[str, Any]] = []
     for issue in issues:
-        rem = rem_by_id.get(issue["id"])
+        if issue.get("severity") not in CRITICAL:
+            continue
+        rem = rem_by_id.get(issue.get("id"))
+        if _is_learned(rem) or issue.get("id") in learned_ids:
+            pending.append(
+                {
+                    "issue_id": issue.get("id"),
+                    "title": issue.get("title"),
+                    "severity": issue.get("severity"),
+                    "affected_service": issue.get("affected_service"),
+                    "summary": issue.get("summary"),
+                    "category": issue.get("category"),
+                    "kb_status": "learned",
+                    "fix_summary": (rem or {}).get("fix_summary"),
+                    "suggested_command": (rem or {}).get("suggested_command"),
+                }
+            )
+    return pending
+
+
+def create_tickets_for_issues(
+    issues: list[dict[str, Any]],
+    remediations: list[dict[str, Any]] | None = None,
+    operator_expertise: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Create + route Jira tickets for the given issues (used by HITL approve)."""
+    client = MockJiraClient()
+    rem_by_id = {r.get("issue_id"): r for r in (remediations or []) if isinstance(r, dict)}
+    expertise = {str(e).strip() for e in (operator_expertise or []) if str(e).strip()}
+
+    tickets: list[dict[str, Any]] = []
+    for issue in issues:
+        rem = rem_by_id.get(issue.get("id")) or rem_by_id.get(issue.get("issue_id"))
+        # HITL payload may already be a pending dict with issue_id as key
+        issue_id = issue.get("id") or issue.get("issue_id")
+        title = issue.get("title") or "Untitled"
+        severity = issue.get("severity") or "high"
+        service = issue.get("affected_service") or "unknown"
+        summary = issue.get("summary") or ""
+        category = issue.get("category")
+
         ticket = client.create_ticket(
-            summary=issue["title"],
-            severity=issue["severity"],
-            issue_id=issue["id"],
+            summary=title,
+            severity=severity,
+            issue_id=str(issue_id),
             description=(
-                f"{issue['summary']}\n\nAffected: {issue['affected_service']}\n"
-                f"Proposed fix: {rem['fix_summary'] if rem else 'see checklist'}\n"
-                f"Command: {rem['suggested_command'] if rem else 'n/a'}"
+                f"{summary}\n\nAffected: {service}\n"
+                f"Proposed fix: {(rem or {}).get('fix_summary') or issue.get('fix_summary') or 'see checklist'}\n"
+                f"Command: {(rem or {}).get('suggested_command') or issue.get('suggested_command') or 'n/a'}\n"
+                f"KB path: newly learned (HITL approved)"
             ),
         )
 
-        # Expertise-based intent routing.
-        required = expertise_for_category(issue.get("category"))
-        matched = required in operator_expertise
+        required = expertise_for_category(category)
+        matched = required in expertise
         ticket.required_expertise = required
         if matched:
             ticket.routing_status = "assigned"
             ticket.assignee = "You (active operator)"
             ticket.routing_explanation = (
-                f"Category '{issue.get('category')}' maps to {required} expertise, "
+                f"Category '{category}' maps to {required} expertise, "
                 f"which matches your active profile — auto-assigned."
             )
         else:
@@ -51,17 +112,36 @@ def jira_node(state: IncidentState) -> dict:
             ticket.routing_status = "routed"
             ticket.assignee = queue
             ticket.routing_explanation = (
-                f"Category '{issue.get('category')}' requires {required} expertise; "
+                f"Category '{category}' requires {required} expertise; "
                 f"routed to {queue}."
             )
 
         tickets.append(ticket.model_dump())
+    return tickets
+
+
+def jira_node(state: IncidentState) -> dict:
+    """Defer Jira: only newly-learned critical/high need HITL; nothing auto-created."""
+    issues = state.get("issues", [])
+    remediations = state.get("remediations", [])
+    fb = state.get("fallback_results") or {}
+    learned_ids = list(fb.get("learned_issue_ids") or [])
+
+    pending = pending_hitl_issues(issues, remediations, learned_ids)
+
+    if pending:
+        msg = (
+            f"HITL required for {len(pending)} newly-learned critical/high issue(s). "
+            "Jira/Slack deferred until operator approve."
+        )
+    else:
+        msg = (
+            "No Jira tickets — KB HIT / non-critical issues skip ticketing; "
+            "no newly-learned criticals pending HITL."
+        )
 
     return {
-        "jira_tickets": tickets,
-        "trace": [trace_event(
-            "jira",
-            f"Created and routed {len(tickets)} JIRA ticket(s) for critical issues.",
-            {"tickets": tickets},
-        )],
+        "jira_tickets": [],
+        "hitl_pending": pending,
+        "trace": [trace_event("jira", msg, {"hitl_pending": [p["issue_id"] for p in pending]})],
     }

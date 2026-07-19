@@ -36,7 +36,7 @@ export default function SlackBoard({ slack }: SlackBoardProps) {
         <div className="space-y-2 max-h-[260px] overflow-y-auto custom-scrollbar">
           {!slack ? (
             <p className="text-[10px] font-mono text-slate-600 text-center py-8">
-              NO NOTIFICATION YET. RUN AN ANALYSIS TO POST THE INCIDENT SUMMARY.
+              STANDBY — SLACK FIRES ONLY AFTER HITL APPROVE ON NEWLY LEARNED CRITICALS.
             </p>
           ) : (
             <div className="p-3 bg-slate-900 border border-slate-800/80 rounded-lg">

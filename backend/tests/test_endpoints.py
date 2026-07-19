@@ -47,6 +47,43 @@ def test_metrics_traffic_shape(client):
     assert "points" in res.json()
 
 
+def test_metrics_hud_shape(client):
+    from app import live_store
+
+    live_store.clear()
+    live_store.add_event(message="CRITICAL boom", severity="critical", response_time_ms=40)
+    res = client.get("/api/metrics/hud")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ingest_total"] >= 1
+    assert body["avg_response_ms"] >= 1
+    assert body["critical_incidents"] >= 1
+
+
+def test_hitl_approve_creates_jira_and_slack(client):
+    payload = {
+        "issue_ids": ["qx-1"],
+        "pending": [
+            {
+                "issue_id": "qx-1",
+                "title": "Novel fault",
+                "severity": "critical",
+                "affected_service": "chronos",
+                "summary": "Unknown signature",
+                "category": "unknown",
+                "fix_summary": "Investigate manifold",
+            }
+        ],
+        "operator_expertise": ["General"],
+    }
+    res = client.post("/api/hitl/approve", json=payload)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "approved"
+    assert len(body["jira_tickets"]) == 1
+    assert body["jira_tickets"][0]["issue_id"] == "qx-1"
+    assert body["slack_result"].get("channel")
+
 def test_bare_and_prefixed_paths_both_exist(client):
     # dev proxy strips /api → bare path; prod uses /api directly.
     assert client.get("/events/recent").status_code == 200

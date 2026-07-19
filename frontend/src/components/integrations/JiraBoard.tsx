@@ -29,7 +29,7 @@ export default function JiraBoard({ tickets }: JiraBoardProps) {
         <div className="space-y-2.5 max-h-[260px] overflow-y-auto custom-scrollbar">
           {tickets.length === 0 ? (
             <p className="text-[10px] font-mono text-slate-600 text-center py-8">
-              NO TICKETS ISSUED. CRITICAL/HIGH ISSUES AUTO-GENERATE ROUTED TICKETS.
+              NO TICKETS YET. NEWLY LEARNED CRITICALS REQUIRE HITL APPROVE.
             </p>
           ) : (
             tickets.map((ticket) => {

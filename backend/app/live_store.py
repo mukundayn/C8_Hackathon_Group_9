@@ -1,13 +1,15 @@
 """In-memory live telemetry store.
 
 Populated by external systems (n8n, Datadog, Grafana, PagerDuty, …) via the
-webhook endpoints. Feeds the cockpit's live log console and traffic analytics.
+webhook endpoints — and by /analyze uploads so the cockpit gauges stay live.
+Feeds the live log console and traffic analytics.
 This is intentionally process-local and ephemeral — no DB required for the demo.
 """
 
 from __future__ import annotations
 
 import re
+import time
 import uuid
 from collections import deque
 from datetime import datetime, timezone
@@ -34,6 +36,14 @@ EXPERTISE_MAP: dict[str, str] = {
     "container_crash": "CPU",
 }
 
+# Numeric severity for chart Y-axis (INFO→CRITICAL).
+SEVERITY_SCORE: dict[str, int] = {
+    "INFO": 1,
+    "WARN": 2,
+    "ERROR": 3,
+    "CRITICAL": 4,
+}
+
 
 def expertise_for_category(category: Optional[str]) -> str:
     if not category:
@@ -46,6 +56,7 @@ def expertise_for_category(category: Optional[str]) -> str:
 _MAX_EVENTS = 200
 _events: Deque[dict[str, Any]] = deque(maxlen=_MAX_EVENTS)
 _lock = Lock()
+_ingest_total = 0  # lifetime +1 per successfully added log (not capped by ring)
 
 _SEVERITY_RE = re.compile(
     r"\b(CRITICAL|FATAL|PANIC|ERROR|ERR|FAIL|WARN|WARNING|INFO|DEBUG)\b",
@@ -88,8 +99,16 @@ def add_event(
     response_time_ms: Optional[int] = None,
     timestamp: Optional[str] = None,
 ) -> dict[str, Any]:
+    """Append one log event. Counts +1 toward ingest rate.
+
+    When ``response_time_ms`` is omitted, records wall time spent building/storing
+    the event so Avg Response can average real process latency.
+    """
+    global _ingest_total
+    t0 = time.perf_counter()
     sev = _normalize_severity(severity)
     cat = category or _guess_category(message, service)
+    process_ms = max(1, int(round((time.perf_counter() - t0) * 1000)))
     event = {
         "id": uuid.uuid4().hex,
         "timestamp": timestamp or datetime.now(timezone.utc).strftime("%H:%M:%S"),
@@ -98,25 +117,48 @@ def add_event(
         "message": message.strip(),
         "category": cat,
         "source": source,
-        "response_time_ms": response_time_ms if response_time_ms is not None else 0,
+        "response_time_ms": int(response_time_ms) if response_time_ms is not None else process_ms,
+        "severity_score": SEVERITY_SCORE.get(sev, 1),
     }
     with _lock:
         _events.append(event)
+        _ingest_total += 1
     return event
 
 
 def add_events_from_text(text: str, source: str = "webhook") -> int:
-    """Parse a raw log blob into individual live events (one per line)."""
-    count = 0
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
+    """Parse a raw log blob into individual live events (one per line).
+
+    Each line bumps ingest rate by +1. Batch wall time is split across lines
+    (minimum 1ms each) so Avg Response reflects process cost of the add.
+    """
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return 0
+
+    t0 = time.perf_counter()
+    # Pre-parse so timing covers the full add work.
+    parsed: list[tuple[str, str, str]] = []
+    for line in lines:
         sev_match = _SEVERITY_RE.search(line)
         severity = sev_match.group(1) if sev_match else "INFO"
         svc_match = _SERVICE_RE.search(line)
         service = svc_match.group(1) if svc_match else source
-        add_event(message=line, severity=severity, service=service, source=source)
+        parsed.append((line, severity, service))
+
+    elapsed_ms = max(1, int(round((time.perf_counter() - t0) * 1000)))
+    # Share batch cost across lines; each gets at least 1ms so the avg tile moves.
+    per_line = max(1, elapsed_ms // len(parsed))
+
+    count = 0
+    for line, severity, service in parsed:
+        add_event(
+            message=line,
+            severity=severity,
+            service=service,
+            source=source,
+            response_time_ms=per_line,
+        )
         count += 1
     return count
 
@@ -129,22 +171,52 @@ def recent(limit: int = _MAX_EVENTS) -> list[dict[str, Any]]:
     return list(reversed(items[-limit:]))
 
 
+def ingest_total() -> int:
+    """Lifetime count of added logs (not limited by ring buffer size)."""
+    with _lock:
+        return _ingest_total
+
+
+def critical_count() -> int:
+    """Rollup of CRITICAL severity events currently in the buffer."""
+    with _lock:
+        return sum(1 for ev in _events if ev.get("severity") == "CRITICAL")
+
+
 def clear() -> None:
+    global _ingest_total
     with _lock:
         _events.clear()
+        _ingest_total = 0
 
 
-def traffic_points(max_buckets: int = 12) -> list[dict[str, Any]]:
-    """Aggregate the buffer into per-minute buckets for the traffic chart."""
+def traffic_points(max_buckets: int = 24) -> list[dict[str, Any]]:
+    """Aggregate the buffer into per-second buckets for volume/sec + severity.
+
+    Each bucket:
+      - requests / volume_per_sec: event count in that second
+      - errors: ERROR + CRITICAL count
+      - avg_response_ms: mean process/response latency
+      - avg_severity: mean severity score (1=INFO … 4=CRITICAL)
+    """
     with _lock:
         items = list(_events)
 
     buckets: dict[str, dict[str, Any]] = {}
     order: list[str] = []
     for ev in items:
-        key = str(ev.get("timestamp", ""))[:5]  # HH:MM
+        ts = str(ev.get("timestamp", ""))
+        # Prefer HH:MM:SS (volume/sec); fall back to HH:MM for older callers.
+        key = ts[:8] if len(ts) >= 8 else ts[:5]
         if key not in buckets:
-            buckets[key] = {"time": key, "requests": 0, "errors": 0, "_rt": 0, "_rtn": 0}
+            buckets[key] = {
+                "time": key,
+                "requests": 0,
+                "errors": 0,
+                "_rt": 0,
+                "_rtn": 0,
+                "_sev": 0,
+            }
             order.append(key)
         b = buckets[key]
         b["requests"] += 1
@@ -154,17 +226,22 @@ def traffic_points(max_buckets: int = 12) -> list[dict[str, Any]]:
         if rt:
             b["_rt"] += rt
             b["_rtn"] += 1
+        b["_sev"] += int(ev.get("severity_score") or SEVERITY_SCORE.get(ev.get("severity", "INFO"), 1))
 
     points = []
     for key in order[-max_buckets:]:
         b = buckets[key]
+        n = b["requests"] or 1
         avg = round(b["_rt"] / b["_rtn"]) if b["_rtn"] else 0
+        # One-second buckets → volume/sec == request count in that second.
         points.append(
             {
                 "time": b["time"],
                 "requests": b["requests"],
+                "volume_per_sec": b["requests"],
                 "errors": b["errors"],
                 "avg_response_ms": avg,
+                "avg_severity": round(b["_sev"] / n, 2),
             }
         )
     return points

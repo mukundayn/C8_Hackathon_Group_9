@@ -91,6 +91,7 @@ def _done_payload(final: dict) -> dict:
             "cookbook": _jsonable(final.get("cookbook") or {}),
             "jira_tickets": _jsonable(final.get("jira_tickets") or []),
             "slack_result": _jsonable(final.get("slack_result") or {}),
+            "hitl_pending": _jsonable(final.get("hitl_pending") or []),
             "trace": _jsonable(final.get("trace") or []),
             "fallback_results": _jsonable(final.get("fallback_results")),
         }
@@ -147,6 +148,13 @@ async def analyze(request: Request):
     if not raw.strip():
         raise HTTPException(status_code=400, detail="No log text provided")
 
+    # Feed cockpit gauges: +1 ingest per line, process latency → Avg Response,
+    # CRITICAL lines → Threat Incidents, traffic volume/sec + severity.
+    try:
+        live_store.add_events_from_text(raw, source=f"analyze:{filename}")
+    except Exception as exc:  # noqa: BLE001 — never block analysis on telemetry
+        print(f"[analyze] live_store feed skipped: {exc}", flush=True)
+
     print(
         f"[analyze] POST from {request.client.host if request.client else '?'} "
         f"filename={filename!r} chars={len(raw)} ct={content_type[:40]!r}"
@@ -193,6 +201,24 @@ async def analyze(request: Request):
                         print(f"[analyze:debug] {dbg['file']} · {dbg['message']}", flush=True)
                         yield {"event": "debug", "data": json.dumps(dbg)}
                     print(f"[analyze] node={node_name} ok", flush=True)
+                    # Hint next stage — remediation can take minutes (no debug until it finishes).
+                    if node_name == "classifier":
+                        n_issues = len(final.get("issues") or [])
+                        yield {
+                            "event": "debug",
+                            "data": json.dumps(
+                                debug_line(
+                                    file="backend/app/nodes/remediation.py",
+                                    node="remediation",
+                                    message=(
+                                        f"ENTERING remediation (blocking) · ~{n_issues} issue(s) → "
+                                        "per-issue RAG + optional rewrite LLM + 1 structured LLM. "
+                                        "No further UI lines until this node returns — watch server prints "
+                                        "[remediation] RAG k/n …"
+                                    ),
+                                )
+                            ),
+                        }
             yield {
                 "event": "debug",
                 "data": json.dumps(
@@ -243,8 +269,84 @@ def events_recent(limit: int = 120):
 
 @api.get("/metrics/traffic")
 def metrics_traffic():
-    """Per-minute traffic buckets derived from the live telemetry buffer."""
+    """Per-second traffic buckets: volume/sec, errors, avg response, severity."""
     return {"points": live_store.traffic_points()}
+
+
+@api.get("/metrics/hud")
+def metrics_hud():
+    """Cockpit gauge rollups driven by every ingested log line."""
+    events = live_store.recent()
+    with_rt = [e for e in events if (e.get("response_time_ms") or 0) > 0]
+    avg_ms = (
+        round(sum(int(e["response_time_ms"]) for e in with_rt) / len(with_rt))
+        if with_rt
+        else 0
+    )
+    return {
+        "ingest_total": live_store.ingest_total(),
+        "avg_response_ms": avg_ms,
+        "critical_incidents": live_store.critical_count(),
+    }
+
+
+@api.post("/hitl/approve")
+async def hitl_approve(request: Request):
+    """Operator approved a newly-learned critical → create Jira + Slack.
+
+    Body::
+        {
+          "issue_ids": ["id1"],
+          "issues": [...],           # optional full issue dicts
+          "remediations": [...],
+          "operator_expertise": ["DB"],
+          "cookbook": {...}
+        }
+    """
+    from app.nodes.jira import create_tickets_for_issues, pending_hitl_issues
+    from app.nodes.notifier import post_slack_for_issues
+
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="JSON body must be an object")
+
+    issue_ids = {str(i) for i in (body.get("issue_ids") or []) if i}
+    all_issues = list(body.get("issues") or [])
+    remediations = list(body.get("remediations") or [])
+    expertise = body.get("operator_expertise") or []
+    if isinstance(expertise, str):
+        expertise = _parse_expertise(expertise)
+    cookbook = body.get("cookbook")
+
+    # Prefer explicit pending payloads; else filter issues by id.
+    pending = list(body.get("pending") or [])
+    if not pending:
+        fb_learned = list(body.get("learned_issue_ids") or [])
+        pending = pending_hitl_issues(all_issues, remediations, fb_learned)
+
+    if issue_ids:
+        pending = [p for p in pending if str(p.get("issue_id") or p.get("id")) in issue_ids]
+        # Also allow raw issues matched by id
+        if not pending and all_issues:
+            pending = [i for i in all_issues if str(i.get("id") or i.get("issue_id")) in issue_ids]
+
+    if not pending:
+        raise HTTPException(status_code=400, detail="No matching issues to approve")
+
+    tickets = create_tickets_for_issues(pending, remediations, list(expertise))
+    slack = post_slack_for_issues(pending, tickets, cookbook if isinstance(cookbook, dict) else None)
+
+    print(
+        f"[hitl/approve] approved={len(pending)} tickets={len(tickets)} "
+        f"slack={slack.get('channel')}",
+        flush=True,
+    )
+    return {
+        "status": "approved",
+        "approved_issue_ids": [p.get("issue_id") or p.get("id") for p in pending],
+        "jira_tickets": tickets,
+        "slack_result": slack,
+    }
 
 
 @api.get("/debug/pipeline-demo")

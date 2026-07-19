@@ -1,9 +1,13 @@
-import { Activity, Gauge, ShieldAlert, Sparkles } from "lucide-react";
+import { Activity, Gauge, ShieldAlert, Sparkles, Library } from "lucide-react";
 
 interface MetricGaugesProps {
   ingestRate: number;
   avgResponseMs: number;
   activeAlerts: number;
+  /** KB HIT count (already known runbooks). */
+  kbHits: number;
+  /** Newly learned / MISS→LEARN count. */
+  kbLearned: number;
   agentsCompleted: number;
   agentsTotal: number;
   pipelineProgress: number;
@@ -13,12 +17,18 @@ export default function MetricGauges({
   ingestRate,
   avgResponseMs,
   activeAlerts,
+  kbHits,
+  kbLearned,
   agentsCompleted,
   agentsTotal,
   pipelineProgress,
 }: MetricGaugesProps) {
+  const kbTotal = kbHits + kbLearned;
+  const knownPct = kbTotal > 0 ? Math.round((kbHits / kbTotal) * 100) : 0;
+  const learnedPct = kbTotal > 0 ? Math.round((kbLearned / kbTotal) * 100) : 0;
+
   return (
-    <section className="relative z-10 grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    <section className="relative z-10 grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
       {/* Ingestion rate */}
       <div className="border border-slate-800 bg-slate-900/40 rounded-2xl p-4 backdrop-blur-md flex flex-col justify-between h-24 text-left transition hover:border-slate-700">
         <div className="flex items-center justify-between text-xs font-mono text-slate-400 uppercase">
@@ -69,7 +79,7 @@ export default function MetricGauges({
             {activeAlerts}
           </span>
           <span className={`text-[10px] font-mono ${activeAlerts > 0 ? "text-rose-400 animate-pulse" : "text-emerald-400"}`}>
-            {activeAlerts > 0 ? "UNRESOLVED" : "STABLE"}
+            {activeAlerts > 0 ? "CRITICAL" : "STABLE"}
           </span>
         </div>
         <div className="h-1 bg-slate-950 rounded-full mt-1 overflow-hidden border border-slate-800">
@@ -77,6 +87,26 @@ export default function MetricGauges({
             className={`h-full rounded-full ${activeAlerts > 0 ? "bg-rose-500" : "bg-emerald-500"}`}
             style={{ width: `${activeAlerts > 0 ? 100 : 10}%` }}
           />
+        </div>
+      </div>
+
+      {/* Known vs Newly Learned */}
+      <div className="border border-slate-800 bg-slate-900/40 rounded-2xl p-4 backdrop-blur-md flex flex-col justify-between h-24 text-left transition hover:border-violet-700/50">
+        <div className="flex items-center justify-between text-xs font-mono text-slate-400 uppercase">
+          <span>Known vs Learned</span>
+          <Library className="w-4 h-4 text-violet-400" />
+        </div>
+        <div className="mt-1 flex items-baseline gap-2">
+          <span className="text-2xl font-black text-white tracking-tight">
+            <span className="text-emerald-400">{kbHits}</span>
+            <span className="text-slate-600 mx-0.5">/</span>
+            <span className="text-violet-300">{kbLearned}</span>
+          </span>
+          <span className="text-[9px] font-mono text-slate-500">HIT / NEW</span>
+        </div>
+        <div className="h-1 bg-slate-950 rounded-full mt-1 overflow-hidden border border-slate-800 flex">
+          <div className="h-full bg-emerald-500" style={{ width: `${knownPct}%` }} />
+          <div className="h-full bg-violet-500" style={{ width: `${learnedPct}%` }} />
         </div>
       </div>
 

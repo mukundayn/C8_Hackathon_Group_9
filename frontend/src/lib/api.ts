@@ -143,8 +143,17 @@ export async function fetchRecentEvents(): Promise<LiveEvent[]> {
 export interface TrafficPoint {
   time: string;
   requests: number;
+  volume_per_sec: number;
   errors: number;
   avg_response_ms: number;
+  /** Mean severity score in bucket: 1=INFO … 4=CRITICAL */
+  avg_severity: number;
+}
+
+export interface HudMetrics {
+  ingest_total: number;
+  avg_response_ms: number;
+  critical_incidents: number;
 }
 
 /** Fetch aggregated traffic buckets derived from the recent-events buffer. */
@@ -152,7 +161,55 @@ export async function fetchTraffic(): Promise<TrafficPoint[]> {
   const res = await fetch(apiUrl("/api/metrics/traffic"), { credentials: "same-origin" });
   if (!res.ok) throw new Error(`Traffic request failed: ${res.status}`);
   const data = (await res.json()) as { points?: TrafficPoint[] };
-  return data.points ?? [];
+  return (data.points ?? []).map((p) => ({
+    ...p,
+    volume_per_sec: p.volume_per_sec ?? p.requests ?? 0,
+    avg_severity: p.avg_severity ?? 0,
+  }));
+}
+
+/** Cockpit tiles: ingest count, avg add process ms, critical rollup. */
+export async function fetchHudMetrics(): Promise<HudMetrics> {
+  const res = await fetch(apiUrl("/api/metrics/hud"), { credentials: "same-origin" });
+  if (!res.ok) throw new Error(`HUD metrics failed: ${res.status}`);
+  const data = (await res.json()) as Partial<HudMetrics>;
+  return {
+    ingest_total: data.ingest_total ?? 0,
+    avg_response_ms: data.avg_response_ms ?? 0,
+    critical_incidents: data.critical_incidents ?? 0,
+  };
+}
+
+export interface HitlApproveRequest {
+  issue_ids: string[];
+  pending?: Array<Record<string, unknown>>;
+  issues?: Array<Record<string, unknown>>;
+  remediations?: Array<Record<string, unknown>>;
+  operator_expertise?: string[];
+  cookbook?: Record<string, unknown> | null;
+  learned_issue_ids?: string[];
+}
+
+export interface HitlApproveResponse {
+  status: string;
+  approved_issue_ids: string[];
+  jira_tickets: import("../types").JiraTicket[];
+  slack_result: import("../types").SlackResult;
+}
+
+/** Approve newly-learned critical(s) → create Jira tickets + Slack notify. */
+export async function approveHitl(body: HitlApproveRequest): Promise<HitlApproveResponse> {
+  const res = await fetch(apiUrl("/api/hitl/approve"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.text().catch(() => "");
+    throw new Error(`HITL approve failed: ${res.status} ${err.slice(0, 160)}`);
+  }
+  return (await res.json()) as HitlApproveResponse;
 }
 
 /** The public URL an external system (e.g. n8n) should POST logs to. */
