@@ -41,7 +41,9 @@ const PHRASES = [
 ];
 
 export default function LoginPage({ isCallback }: LoginPageProps) {
-  const { signIn, isLoaded } = useSignIn();
+  // Clerk v6 custom-flow API: useSignIn() returns { signIn, fetchStatus, errors }
+  // (no isLoaded / authenticateWithRedirect — those are the legacy SignIn resource).
+  const { signIn, fetchStatus } = useSignIn();
   const [sound, setSound] = useState(isSoundEnabled());
   const [expertise, setExpertise] = useState<Expertise[]>(loadExpertise);
   const [error, setError] = useState<string | null>(null);
@@ -77,24 +79,28 @@ export default function LoginPage({ isCallback }: LoginPageProps) {
     if (next) setTimeout(() => playClickPulse(), 50);
   };
 
-  const continueWithGoogle = () => {
+  const continueWithGoogle = async () => {
     playClickPulse();
     if (expertise.length === 0) {
       setError("AUTHENTICATION EXCEPTION: select at least one operational expertise domain.");
       return;
     }
-    if (!isLoaded || !signIn) {
+    if (!signIn || fetchStatus === "fetching") {
       setError("AUTH CORE INITIALIZING — retry in a moment.");
       return;
     }
     setBooting(true);
     playBootSweep();
     saveExpertise(expertise);
-    void signIn.authenticateWithRedirect({
+    const { error: ssoError } = await signIn.sso({
       strategy: "oauth_google",
-      redirectUrl: "/login/sso-callback",
-      redirectUrlComplete: "/analyze",
+      redirectCallbackUrl: "/login/sso-callback",
+      redirectUrl: "/analyze",
     });
+    if (ssoError) {
+      setBooting(false);
+      setError(ssoError.message || "OAuth redirect failed. Retry in a moment.");
+    }
   };
 
   return (
