@@ -58,7 +58,8 @@ chroma_db/
 # --- Logs / runtime ---
 *.log
 !samples/*.log
-logs/
+/logs/
+backend/logs/
 tmp/
 temp/
 *.pid
