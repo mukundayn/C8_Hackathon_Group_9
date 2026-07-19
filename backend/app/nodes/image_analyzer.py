@@ -286,6 +286,13 @@ def analyze_image_with_vision(
     if image_base64:
         try:
             llm = get_llm(temperature=0.2)
+            # Strip accidental data-URL prefix; default mime when caller omits it.
+            mime = "image/png"
+            payload = image_base64
+            if payload.startswith("data:") and "," in payload:
+                header, payload = payload.split(",", 1)
+                if header.startswith("data:"):
+                    mime = header[5:].split(";", 1)[0] or mime
             messages = [
                 {
                     "role": "user",
@@ -298,7 +305,7 @@ def analyze_image_with_vision(
                         {
                             "type": "image_url",
                             "image_url": {
-                                "url": f"data:image/png;base64,{image_base64}",
+                                "url": f"data:{mime};base64,{payload}",
                             },
                         },
                     ],
@@ -326,6 +333,7 @@ def image_analyzer_node(state: IncidentState) -> dict:
     """Graph node that processes attached images in the state."""
     image_data = state.get("image_data")
     image_description = state.get("image_description", "")
+    image_mime = state.get("image_mime") or "image/png"
 
     if not image_data and not image_description:
         return {
@@ -333,8 +341,13 @@ def image_analyzer_node(state: IncidentState) -> dict:
             "trace": [trace_event("image_analyzer", "No image provided, skipping.")],
         }
 
+    # Prefer an explicit mime so JPEG/WebP screenshots are not forced to image/png.
+    vision_payload = image_data
+    if image_data and not str(image_data).startswith("data:"):
+        vision_payload = f"data:{image_mime};base64,{image_data}"
+
     analysis = analyze_image_with_vision(
-        image_base64=image_data,
+        image_base64=vision_payload,
         description=image_description,
     )
     analysis_dict = analysis.model_dump()

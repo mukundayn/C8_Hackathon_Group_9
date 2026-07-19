@@ -88,11 +88,37 @@ async function consumeAnalyzeStream(
   return sawDone;
 }
 
+function isImageFile(file: File): boolean {
+  if (file.type.startsWith("image/")) return true;
+  return /\.(png|jpe?g|gif|webp)$/i.test(file.name);
+}
+
+function imageMimeFor(file: File): string {
+  if (file.type.startsWith("image/")) return file.type;
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
+  return "image/png";
+}
+
+/** Binary → base64 without data-URL prefix (chunked to avoid call-stack limits). */
+async function fileToBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
 /**
- * Stream a log analysis from the real backend.
+ * Stream a log (or screenshot) analysis from the real backend.
  *
  * Sends JSON (not multipart) to avoid Render/WAF 403 "Blocked" pages that
  * frequently trigger on multipart uploads containing log-attack patterns.
+ * Images are sent as base64 ``image_data`` so the LangGraph image_analyzer runs.
  */
 export async function analyze(
   file: File,
@@ -108,7 +134,24 @@ export async function analyze(
         "OpenRouter API key missing. Return to login and paste your sk-or-… key so analysis bills your account.",
       );
     }
-    const logText = await file.text();
+
+    const filename = file.name || (isImageFile(file) ? "upload.png" : "upload.log");
+    const body: Record<string, string> = {
+      filename,
+      expertise: expertise.join(","),
+      openrouter_api_key: openrouterKey,
+    };
+
+    if (isImageFile(file)) {
+      body.image_data = await fileToBase64(file);
+      body.image_mime = imageMimeFor(file);
+      body.image_description = `Operations screenshot upload: ${filename}`;
+      // Classifier needs a non-empty raw_logs string; image path adds issues via image_analyzer.
+      body.log_text = `[image-upload] ${filename}\nINFO netra: screenshot attached for vision analysis\n`;
+    } else {
+      body.log_text = await file.text();
+    }
+
     const res = await fetch(url, {
       method: "POST",
       headers: {
@@ -117,12 +160,7 @@ export async function analyze(
         "X-OpenRouter-Api-Key": openrouterKey,
       },
       credentials: "same-origin",
-      body: JSON.stringify({
-        log_text: logText,
-        filename: file.name || "upload.log",
-        expertise: expertise.join(","),
-        openrouter_api_key: openrouterKey,
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!res.ok) {

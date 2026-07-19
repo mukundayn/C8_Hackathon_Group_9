@@ -16,7 +16,8 @@ class IncidentState(TypedDict, total=False):
     operator_expertise: list[str]   # e.g. ["DB", "Memory"] — drives Jira routing
 
     # image input (optional)
-    image_data: str             # base64-encoded image
+    image_data: str             # base64-encoded image (no data-URL prefix)
+    image_mime: str             # e.g. image/png — used by vision request
     image_description: str      # text description of the image
 
     # classifier node

@@ -237,9 +237,13 @@ export default function Dashboard() {
   }, []);
 
   const processFile = (file: File) => {
-    const ok = /\.(log|txt|json)$/i.test(file.name);
+    const ok =
+      /\.(log|txt|json|png|jpe?g|gif|webp)$/i.test(file.name) ||
+      file.type.startsWith("image/");
     if (!ok) {
-      setUploadError("FORMAT REJECTION: only .log, .txt, or .json files are parsed by Netra.");
+      setUploadError(
+        "FORMAT REJECTION: use .log / .txt / .json logs, or screenshot images (.png / .jpg / .gif / .webp).",
+      );
       return;
     }
     playSuccessChime();
@@ -478,13 +482,15 @@ export default function Dashboard() {
                   if (file) processFile(file);
                   e.target.value = "";
                 }}
-                accept=".log,.txt,.json"
+                accept=".log,.txt,.json,.png,.jpg,.jpeg,.gif,.webp,image/*"
                 className="hidden"
               />
               <div className="flex flex-col items-center justify-center gap-2">
                 <FileCode className="w-10 h-10 text-cyan-400 animate-pulse mb-1" />
                 <p className="text-xs font-semibold text-white">
-                  {analysis.running ? "Analyzing…" : "Drag & drop your server .log / .txt / .json file"}
+                  {analysis.running
+                    ? "Analyzing…"
+                    : "Drag & drop logs (.log / .txt / .json) or screenshots (.png / .jpg)"}
                 </p>
                 <p className="text-[10px] text-slate-500 font-mono mt-0.5">OR CLICK TO SELECT FROM SYSTEM EXPLORER</p>
               </div>

@@ -1,4 +1,6 @@
+import base64
 import json
+import mimetypes
 import os
 import time
 import uuid
@@ -122,7 +124,10 @@ async def analyze(request: Request):
           "log_text": "...",
           "filename": "app.log",
           "expertise": "DB,Memory",
-          "openrouter_api_key": "sk-or-..."
+          "openrouter_api_key": "sk-or-...",
+          "image_data": "<optional base64>",
+          "image_mime": "image/png",
+          "image_description": "optional caption"
         }
 
     Multipart ``file`` + ``expertise`` is still accepted for local tooling.
@@ -133,6 +138,9 @@ async def analyze(request: Request):
     filename = "upload.log"
     expertise_raw = ""
     raw = ""
+    image_data = ""
+    image_mime = ""
+    image_description = ""
     openrouter_key = (request.headers.get("x-openrouter-api-key") or "").strip()
 
     if "application/json" in content_type:
@@ -142,6 +150,14 @@ async def analyze(request: Request):
         raw = str(body.get("log_text") or body.get("logs") or body.get("text") or "")
         filename = str(body.get("filename") or filename)
         expertise_raw = str(body.get("expertise") or "")
+        image_data = str(body.get("image_data") or "").strip()
+        image_mime = str(body.get("image_mime") or "").strip()
+        image_description = str(body.get("image_description") or "").strip()
+        # Allow data-URL payloads from clients
+        if image_data.startswith("data:") and "," in image_data:
+            header, image_data = image_data.split(",", 1)
+            if ";base64" in header and header.startswith("data:"):
+                image_mime = image_mime or header[5:].split(";", 1)[0]
         body_key = str(body.get("openrouter_api_key") or body.get("api_key") or "").strip()
         if body_key:
             openrouter_key = body_key
@@ -155,14 +171,37 @@ async def analyze(request: Request):
         if upload is None:
             raise HTTPException(status_code=400, detail="Missing form field 'file'")
         data = await upload.read()  # type: ignore[union-attr]
-        raw = data.decode("utf-8", errors="replace") if isinstance(data, (bytes, bytearray)) else str(data)
         filename = getattr(upload, "filename", None) or filename
+        ctype = str(getattr(upload, "content_type", "") or "")
+        is_image = ctype.startswith("image/") or str(filename).lower().endswith(
+            (".png", ".jpg", ".jpeg", ".gif", ".webp")
+        )
+        if is_image and isinstance(data, (bytes, bytearray)):
+            image_data = base64.b64encode(bytes(data)).decode("ascii")
+            image_mime = ctype if ctype.startswith("image/") else (
+                mimetypes.guess_type(str(filename))[0] or "image/png"
+            )
+            image_description = f"Operations screenshot upload: {filename}"
+            raw = (
+                f"[image-upload] {filename}\n"
+                "INFO netra: screenshot attached for vision analysis\n"
+            )
+        else:
+            raw = data.decode("utf-8", errors="replace") if isinstance(data, (bytes, bytearray)) else str(data)
     else:
         # Fallback: raw text body
         raw = (await request.body()).decode("utf-8", errors="replace")
 
-    if not raw.strip():
-        raise HTTPException(status_code=400, detail="No log text provided")
+    if not image_mime and image_data:
+        image_mime = mimetypes.guess_type(filename)[0] or "image/png"
+
+    if not raw.strip() and not image_data:
+        raise HTTPException(status_code=400, detail="No log text or image provided")
+    if not raw.strip() and image_data:
+        raw = (
+            f"[image-upload] {filename}\n"
+            "INFO netra: screenshot attached for vision analysis\n"
+        )
 
     if not openrouter_key:
         raise HTTPException(
@@ -198,6 +237,11 @@ async def analyze(request: Request):
         "operator_expertise": _parse_expertise(expertise_raw),
         "trace": [],
     }
+    if image_data:
+        initial["image_data"] = image_data
+        initial["image_mime"] = image_mime or "image/png"
+        if image_description:
+            initial["image_description"] = image_description
 
     async def event_stream():
         # Accumulate from streamed updates so the done event does not depend on
