@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Netra.ai — Product Presentation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #060814;
+      --bg-elev: #0c1224;
+      --line: #1e293b;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --cyan: #22d3ee;
+      --cyan-dim: #0891b2;
+      --pink: #f472b6;
+      --emerald: #34d399;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Syne", system-ui, sans-serif;
+      overflow: hidden;
+    }
+
+    /* Atmosphere */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 20% 0%, rgba(34, 211, 238, 0.12), transparent 50%),
+        radial-gradient(ellipse 60% 40% at 90% 80%, rgba(8, 145, 178, 0.1), transparent 45%),
+        linear-gradient(to right, rgba(30, 41, 59, 0.35) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(30, 41, 59, 0.35) 1px, transparent 1px);
+      background-size: auto, auto, 48px 48px, 48px 48px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .deck {
+      position: relative;
+      z-index: 1;
+      height: 100%;
+      width: 100%;
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: clamp(1.5rem, 5vw, 4rem) clamp(1.5rem, 6vw, 5rem);
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(18px);
+      transition: opacity 0.45s ease, transform 0.45s ease, visibility 0.45s;
+      pointer-events: none;
+    }
+    .slide.active {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .eyebrow {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.72rem;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--cyan);
+      margin-bottom: 1rem;
+    }
+    h1 {
+      font-size: clamp(2.6rem, 7vw, 5.2rem);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      line-height: 0.95;
+      max-width: 12ch;
+    }
+    h1 .grad {
+      background: linear-gradient(120deg, var(--cyan), #60a5fa 55%, var(--pink));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    h2 {
+      font-size: clamp(1.8rem, 4vw, 3rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin-bottom: 0.75rem;
+    }
+    .lede {
+      margin-top: 1.25rem;
+      max-width: 38rem;
+      font-size: clamp(1rem, 2vw, 1.25rem);
+      color: var(--muted);
+      font-weight: 600;
+      line-height: 1.45;
+    }
+    .mono { font-family: "IBM Plex Mono", monospace; }
+
+    /* Chrome */
+    .topbar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 20;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 1.5rem;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+    .topbar strong { color: var(--cyan); font-weight: 600; }
+    .progress {
+      position: fixed;
+      bottom: 0; left: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--cyan), var(--pink));
+      z-index: 20;
+      transition: width 0.35s ease;
+    }
+    .nav {
+      position: fixed;
+      bottom: 1.25rem;
+      right: 1.25rem;
+      z-index: 20;
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .nav button {
+      border: 1px solid var(--line);
+      background: rgba(12, 18, 36, 0.85);
+      color: var(--text);
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      padding: 0.65rem 0.9rem;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s, transform 0.15s;
+    }
+    .nav button:hover {
+      border-color: var(--cyan);
+      color: var(--cyan);
+      transform: translateY(-1px);
+    }
+    .dots {
+      position: fixed;
+      bottom: 1.5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      display: flex;
+      gap: 0.45rem;
+    }
+    .dots button {
+      width: 8px; height: 8px;
+      border-radius: 999px;
+      border: none;
+      background: #334155;
+      cursor: pointer;
+      padding: 0;
+      transition: width 0.25s, background 0.25s;
+    }
+    .dots button.on {
+      width: 22px;
+      background: var(--cyan);
+    }
+
+    /* Cards / grids */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1rem;
+      margin-top: 1.75rem;
+      max-width: 960px;
+    }
+    .tile {
+      border: 1px solid var(--line);
+      background: rgba(12, 18, 36, 0.72);
+      padding: 1.15rem 1.25rem;
+      text-align: left;
+      transition: border-color 0.2s, transform 0.2s;
+      cursor: default;
+    }
+    .tile:hover, .tile.hot {
+      border-color: rgba(34, 211, 238, 0.55);
+      transform: translateY(-2px);
+    }
+    .tile .k {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.65rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--cyan);
+      margin-bottom: 0.45rem;
+    }
+    .tile h3 {
+      font-size: 1.1rem;
+      margin-bottom: 0.35rem;
+    }
+    .tile p {
+      font-size: 0.9rem;
+      color: var(--muted);
+      line-height: 1.4;
+      font-weight: 600;
+    }
+
+    /* Pipeline interactive */
+    .pipeline {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      margin-top: 1.75rem;
+      max-width: 980px;
+    }
+    .stage {
+      flex: 1 1 140px;
+      min-width: 120px;
+      border: 1px solid var(--line);
+      background: rgba(12, 18, 36, 0.8);
+      padding: 0.9rem;
+      cursor: pointer;
+      text-align: left;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .stage:hover, .stage.selected {
+      border-color: var(--cyan);
+      box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.2);
+    }
+    .stage .idx {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.65rem;
+      color: var(--cyan-dim);
+      letter-spacing: 0.12em;
+    }
+    .stage h3 { font-size: 0.95rem; margin: 0.35rem 0; }
+    .stage p { font-size: 0.78rem; color: var(--muted); font-weight: 600; line-height: 1.35; }
+    .detail {
+      margin-top: 1.25rem;
+      border-left: 2px solid var(--cyan);
+      padding: 0.75rem 0 0.75rem 1rem;
+      max-width: 40rem;
+      min-height: 4.5rem;
+    }
+    .detail strong { display: block; margin-bottom: 0.35rem; }
+    .detail span { color: var(--muted); font-weight: 600; font-size: 0.95rem; line-height: 1.45; }
+
+    /* Flow demo */
+    .flow-demo {
+      margin-top: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+      max-width: 520px;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.78rem;
+    }
+    .flow-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border: 1px solid var(--line);
+      padding: 0.55rem 0.75rem;
+      background: rgba(6, 8, 20, 0.6);
+    }
+    .flow-row .bar {
+      width: 40%;
+      height: 4px;
+      background: #1e293b;
+      overflow: hidden;
+    }
+    .flow-row .bar i {
+      display: block;
+      height: 100%;
+      width: 0;
+      background: linear-gradient(90deg, var(--cyan), var(--emerald));
+      transition: width 0.6s ease;
+    }
+    .flow-row.done .bar i { width: 100%; }
+    .flow-row.active .bar i { width: 62%; animation: pulse 1s infinite; }
+    .flow-row .st { color: var(--muted); }
+    .flow-row.done .st { color: var(--emerald); }
+    .flow-row.active .st { color: var(--cyan); }
+    @keyframes pulse {
+      50% { opacity: 0.55; }
+    }
+
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-top: 2rem;
+    }
+    .cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.85rem 1.2rem;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      text-decoration: none;
+      border: 1px solid var(--cyan);
+      color: #041016;
+      background: var(--cyan);
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.2s;
+    }
+    .cta:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 0 24px rgba(34, 211, 238, 0.35);
+    }
+    .cta.ghost {
+      background: transparent;
+      color: var(--cyan);
+    }
+
+    .hint {
+      position: fixed;
+      bottom: 1.5rem;
+      left: 1.5rem;
+      z-index: 20;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.65rem;
+      letter-spacing: 0.1em;
+      color: #475569;
+      text-transform: uppercase;
+    }
+
+    @media (max-width: 640px) {
+      .hint { display: none; }
+      .dots { bottom: 4.2rem; }
+      h1 { max-width: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div><strong>NETRA.AI</strong> // product presentation</div>
+    <div id="slideLabel">01 / 08</div>
+  </div>
+  <div class="progress" id="progress"></div>
+  <p class="hint">← → or click dots · space next</p>
+
+  <div class="deck" id="deck">
+    <!-- 1 -->
+    <section class="slide active" data-title="01 / 08">
+      <p class="eyebrow">C8 Hackathon · Group 9</p>
+      <h1><span class="grad">NETRA.AI</span></h1>
+      <p class="lede">
+        Cognitive observability for incident response — five LangGraph agents,
+        RAG-grounded remediations, and a live operator cockpit. Real backend. Real OAuth. Real stream.
+      </p>
+      <div class="cta-row">
+        <button class="cta" type="button" data-go="1">Enter the pitch →</button>
+      </div>
+    </section>
+
+    <!-- 2 -->
+    <section class="slide" data-title="02 / 08">
+      <p class="eyebrow">The problem</p>
+      <h2>Incidents move faster than runbooks.</h2>
+      <p class="lede">
+        On-call engineers drown in log noise while critical signals hide in plain sight.
+        Triage, root-cause, ticketing, and Slack updates are still mostly manual glue.
+      </p>
+      <div class="grid-2">
+        <div class="tile">
+          <div class="k">Pain</div>
+          <h3>MTTR is human-bound</h3>
+          <p>Classification, runbook search, and ticket routing compete for the same scarce attention.</p>
+        </div>
+        <div class="tile">
+          <div class="k">Gap</div>
+          <h3>Demo UIs ≠ production brains</h3>
+          <p>Pretty dashboards often fake the agents. Netra wires a real LangGraph pipeline end-to-end.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3 -->
+    <section class="slide" data-title="03 / 08">
+      <p class="eyebrow">The product</p>
+      <h2>One cockpit. Five agents. Live truth.</h2>
+      <div class="grid-2">
+        <div class="tile hot">
+          <div class="k">Ingest</div>
+          <h3>Upload or webhook</h3>
+          <p>Drop a .log / template, or POST from n8n / Datadog into the live feed.</p>
+        </div>
+        <div class="tile hot">
+          <div class="k">Analyze</div>
+          <h3>SSE LangGraph stream</h3>
+          <p>Watch each agent complete in the flow chart as the graph runs for real.</p>
+        </div>
+        <div class="tile hot">
+          <div class="k">Resolve</div>
+          <h3>RAG remediations</h3>
+          <p>Chroma runbooks + hybrid search + confidence rewrite → grounded fixes.</p>
+        </div>
+        <div class="tile hot">
+          <div class="k">Act</div>
+          <h3>Jira + Slack</h3>
+          <p>Expertise-routed tickets and a Slack summary preview for the channel.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 -->
+    <section class="slide" data-title="04 / 08">
+      <p class="eyebrow">Interactive · click a stage</p>
+      <h2>Agent pipeline</h2>
+      <div class="pipeline" id="pipeline">
+        <button type="button" class="stage selected" data-i="0">
+          <div class="idx">AGENT 01</div>
+          <h3>Classifier</h3>
+          <p>Parse, cluster, detect issues</p>
+        </button>
+        <button type="button" class="stage" data-i="1">
+          <div class="idx">AGENT 02</div>
+          <h3>Remediator</h3>
+          <p>RAG-grounded fixes</p>
+        </button>
+        <button type="button" class="stage" data-i="2">
+          <div class="idx">AGENT 03</div>
+          <h3>Cookbook</h3>
+          <p>Action checklist</p>
+        </button>
+        <button type="button" class="stage" data-i="3">
+          <div class="idx">AGENT 04</div>
+          <h3>Jira</h3>
+          <p>Route by expertise</p>
+        </button>
+        <button type="button" class="stage" data-i="4">
+          <div class="idx">AGENT 05</div>
+          <h3>Notifier</h3>
+          <p>Slack summary</p>
+        </button>
+      </div>
+      <div class="detail" id="stageDetail">
+        <strong>Classifier</strong>
+        <span>Parses raw logs, clusters error signatures, and uses the LLM to emit structured issues with severity and evidence.</span>
+      </div>
+    </section>
+
+    <!-- 5 -->
+    <section class="slide" data-title="05 / 08">
+      <p class="eyebrow">Live demo simulation</p>
+      <h2>Press play — watch the stream.</h2>
+      <p class="lede">Illustrates the UI’s event-driven progress (same stages as production SSE).</p>
+      <div class="cta-row">
+        <button class="cta" type="button" id="playFlow">▶ Run analysis sim</button>
+        <button class="cta ghost" type="button" id="resetFlow">Reset</button>
+      </div>
+      <div class="flow-demo" id="flowDemo">
+        <div class="flow-row" data-step="0"><span>classifier</span><span class="st">PENDING</span><span class="bar"><i></i></span></div>
+        <div class="flow-row" data-step="1"><span>remediation</span><span class="st">PENDING</span><span class="bar"><i></i></span></div>
+        <div class="flow-row" data-step="2"><span>cookbook</span><span class="st">PENDING</span><span class="bar"><i></i></span></div>
+        <div class="flow-row" data-step="3"><span>jira</span><span class="st">PENDING</span><span class="bar"><i></i></span></div>
+        <div class="flow-row" data-step="4"><span>notifier</span><span class="st">PENDING</span><span class="bar"><i></i></span></div>
+      </div>
+    </section>
+
+    <!-- 6 -->
+    <section class="slide" data-title="06 / 08">
+      <p class="eyebrow">Architecture</p>
+      <h2>Monorepo. One deploy.</h2>
+      <div class="grid-2">
+        <div class="tile">
+          <div class="k">Frontend</div>
+          <h3>React 19 + Vite + Tailwind</h3>
+          <p>Clerk SSO · SSE client · Netra HUD · Recharts traffic · Live console</p>
+        </div>
+        <div class="tile">
+          <div class="k">Backend</div>
+          <h3>FastAPI + LangGraph</h3>
+          <p>Chroma RAG · OpenRouter LLM · webhooks · expertise routing · mock Jira/Slack</p>
+        </div>
+        <div class="tile">
+          <div class="k">Quality</div>
+          <h3>CI + evals</h3>
+          <p>pytest · vitest · golden-set evals · GitHub Actions on every push</p>
+        </div>
+        <div class="tile">
+          <div class="k">Host</div>
+          <h3>Render Blueprint</h3>
+          <p>Build SPA → static/ · uvicorn serves API + UI · HF_TOKEN for free-tier RAM</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7 -->
+    <section class="slide" data-title="07 / 08">
+      <p class="eyebrow">Differentiators</p>
+      <h2>Why this scores.</h2>
+      <div class="grid-2">
+        <div class="tile">
+          <div class="k">01</div>
+          <h3>Not a fake agent demo</h3>
+          <p>SSE events map 1:1 to LangGraph nodes — judges can verify the stream.</p>
+        </div>
+        <div class="tile">
+          <div class="k">02</div>
+          <h3>RAG with confidence</h3>
+          <p>Hybrid retrieval + rerank + query rewrite when scores are low.</p>
+        </div>
+        <div class="tile">
+          <div class="k">03</div>
+          <h3>Intent-aware ticketing</h3>
+          <p>Category → expertise map assigns to the operator or routes out.</p>
+        </div>
+        <div class="tile">
+          <div class="k">04</div>
+          <h3>Hackathon-ready ops</h3>
+          <p>CI green, README, env examples, Render blueprint, presentation deck.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8 -->
+    <section class="slide" data-title="08 / 08">
+      <p class="eyebrow">Close</p>
+      <h2>Ship the cockpit.</h2>
+      <p class="lede">
+        Netra turns log chaos into a guided incident response loop —
+        classify, ground, checklist, ticket, notify.
+      </p>
+      <div class="cta-row">
+        <a class="cta" href="https://github.com/mukundayn/C8_Hackathon_Group_9" target="_blank" rel="noreferrer">GitHub repo</a>
+        <button class="cta ghost" type="button" data-go="0">↻ Restart deck</button>
+      </div>
+      <p class="lede mono" style="margin-top:2rem;font-size:0.8rem;color:#64748b;">
+        Stack: React · FastAPI · LangGraph · Chroma · Clerk · Render
+      </p>
+    </section>
+  </div>
+
+  <div class="dots" id="dots"></div>
+  <div class="nav">
+    <button type="button" id="prev">← Prev</button>
+    <button type="button" id="next">Next →</button>
+  </div>
+
+  <script>
+    const slides = [...document.querySelectorAll(".slide")];
+    const dots = document.getElementById("dots");
+    const progress = document.getElementById("progress");
+    const slideLabel = document.getElementById("slideLabel");
+    let i = 0;
+
+    slides.forEach((_, idx) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.setAttribute("aria-label", "Go to slide " + (idx + 1));
+      b.addEventListener("click", () => go(idx));
+      dots.appendChild(b);
+    });
+
+    function go(n) {
+      i = (n + slides.length) % slides.length;
+      slides.forEach((s, idx) => s.classList.toggle("active", idx === i));
+      [...dots.children].forEach((d, idx) => d.classList.toggle("on", idx === i));
+      progress.style.width = ((i + 1) / slides.length * 100) + "%";
+      slideLabel.textContent = slides[i].dataset.title || "";
+    }
+
+    document.getElementById("prev").onclick = () => go(i - 1);
+    document.getElementById("next").onclick = () => go(i + 1);
+    document.querySelectorAll("[data-go]").forEach((el) => {
+      el.addEventListener("click", () => go(Number(el.dataset.go)));
+    });
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight" || e.key === " " || e.key === "PageDown") {
+        e.preventDefault();
+        go(i + 1);
+      } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
+        e.preventDefault();
+        go(i - 1);
+      } else if (e.key === "Home") go(0);
+      else if (e.key === "End") go(slides.length - 1);
+    });
+
+    // Pipeline detail
+    const details = [
+      ["Classifier", "Parses raw logs, clusters error signatures, and uses the LLM to emit structured issues with severity and evidence."],
+      ["Remediator", "Builds an incident-aware query, retrieves runbooks (hybrid + rerank), rewrites on low confidence, and proposes grounded commands."],
+      ["Cookbook", "Turns remediations into an ordered incident checklist with owners and done-when criteria."],
+      ["Jira", "Creates tickets for critical/high issues and routes by expertise — assigned to you or a specialist queue."],
+      ["Notifier", "Posts a Slack-ready summary of the incident for the on-call channel (mock client in demo)."],
+    ];
+    const stageDetail = document.getElementById("stageDetail");
+    document.querySelectorAll("#pipeline .stage").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("#pipeline .stage").forEach((b) => b.classList.remove("selected"));
+        btn.classList.add("selected");
+        const [title, body] = details[Number(btn.dataset.i)];
+        stageDetail.innerHTML = "<strong>" + title + "</strong><span>" + body + "</span>";
+      });
+    });
+
+    // Flow sim
+    let timers = [];
+    function resetFlow() {
+      timers.forEach(clearTimeout);
+      timers = [];
+      document.querySelectorAll("#flowDemo .flow-row").forEach((row) => {
+        row.classList.remove("active", "done");
+        row.querySelector(".st").textContent = "PENDING";
+      });
+    }
+    document.getElementById("resetFlow").onclick = resetFlow;
+    document.getElementById("playFlow").onclick = () => {
+      resetFlow();
+      const rows = [...document.querySelectorAll("#flowDemo .flow-row")];
+      rows.forEach((row, idx) => {
+        timers.push(setTimeout(() => {
+          rows.forEach((r) => {
+            if (r.classList.contains("active")) {
+              r.classList.remove("active");
+              r.classList.add("done");
+              r.querySelector(".st").textContent = "COMPLETED";
+            }
+          });
+          row.classList.add("active");
+          row.querySelector(".st").textContent = "RUNNING…";
+        }, idx * 700));
+      });
+      timers.push(setTimeout(() => {
+        rows.forEach((r) => {
+          r.classList.remove("active");
+          r.classList.add("done");
+          r.querySelector(".st").textContent = "COMPLETED";
+        });
+      }, rows.length * 700 + 200));
+    };
+
+    go(0);
+  </script>
+</body>
+</html>

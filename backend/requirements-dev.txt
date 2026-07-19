@@ -1,3 +1,5 @@
-# Test-only dependencies (installed on top of requirements.txt in CI/local).
-pytest>=8.0.0
-httpx>=0.27.0
+# Dev / CI-only dependencies (install on top of requirements.txt locally if needed).
+# CI installs a lighter subset — see .github/workflows/ci.yml.
+
+pytest>=8.0.0,<10.0.0
+httpx>=0.27.0,<1.0.0

@@ -35,6 +35,8 @@ services:
 
     envVars:
       # ── Non-secret config ──────────────────────────────────────────────
+      - key: PYTHON_VERSION
+        value: "3.12.8"               # avoid bleeding-edge 3.14 on Render
       - key: CHROMA_DIR
         value: ./chroma_db              # ephemeral on free tier; re-seeded at startup
       - key: EMBEDDING_MODEL
@@ -56,8 +58,8 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false                   # marks it as a manual secret
       - key: CLERK_PUBLISHABLE_KEY
-        sync: false
+        sync: false                   # also required at frontend build time
       - key: CLERK_SECRET_KEY
         sync: false
       - key: HF_TOKEN
-        sync: false                   # free at huggingface.co/settings/tokens
+        sync: false                   # free at huggingface.co/settings/tokens — REQUIRED on free tier

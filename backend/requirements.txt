@@ -1,35 +1,40 @@
-# Multi-Agent DevOps Incident Analysis Suite — backend dependencies
+# Netra.ai / Incident Suite — backend dependencies
 # Install (inside a venv):  pip install -r requirements.txt
+#
+# Python: 3.11–3.13 recommended (Render: set PYTHON_VERSION=3.12).
+# Production (Render free tier): set HF_TOKEN so embeddings use the
+# HuggingFace Inference API instead of loading local sentence-transformers/torch
+# into a 512MB instance.
 
-# ---- LangGraph orchestration + LLM ----
-langgraph>=0.2.0
-langchain>=0.3.0
-langchain-core>=0.3.0
-langchain-openai>=0.2.0            # OpenRouter (OpenAI-compatible endpoint)
+# ---- LangGraph orchestration + LLM (OpenRouter) ----
+langgraph>=0.2.0,<2.0.0
+langchain>=0.3.0,<2.0.0
+langchain-core>=0.3.0,<2.0.0
+langchain-openai>=0.2.0,<2.0.0
 
-# ---- RAG: vector DB + local embeddings ----
-langchain-chroma>=0.1.4           # Chroma vector store (pulls in chromadb)
-langchain-huggingface>=0.1.0      # HuggingFaceEmbeddings wrapper
-sentence-transformers>=3.0.0      # local embedding model (all-MiniLM-L6-v2)
-rank_bm25>=0.2.2                  # BM25 lexical retrieval for hybrid search
+# ---- RAG: Chroma + embeddings + hybrid search ----
+langchain-chroma>=0.1.4,<2.0.0
+langchain-huggingface>=0.1.0,<2.0.0
+sentence-transformers>=3.0.0,<6.0.0
+rank_bm25>=0.2.2,<1.0.0
 
-# ---- web layer ----
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-sse-starlette>=2.1.0              # Server-Sent Events for FastAPI
-python-multipart>=0.0.9          # file uploads
-httpx>=0.27.0                    # async HTTP client for webhook callbacks
+# ---- Web / API ----
+fastapi>=0.115.0,<1.0.0
+uvicorn[standard]>=0.30.0,<1.0.0
+sse-starlette>=2.1.0,<4.0.0
+python-multipart>=0.0.9,<1.0.0
+httpx>=0.27.0,<1.0.0
 
-# ---- config / models ----
-python-dotenv>=1.0.0
-pydantic>=2.0.0
+# ---- Config / models ----
+python-dotenv>=1.0.0,<2.0.0
+pydantic>=2.0.0,<3.0.0
 
-# ---- HuggingFace datasets + Hub ----
-datasets>=2.14.0                  # load HF datasets for incident knowledge
-huggingface-hub>=0.20.0           # search HF Hub for relevant datasets
+# ---- HuggingFace Hub (fallback knowledge + optional datasets) ----
+datasets>=2.14.0,<6.0.0
+huggingface-hub>=0.20.0,<2.0.0
 
-# ---- LangSmith evals ----
-langsmith>=0.1.0                  # LangSmith eval tracking (optional)
+# ---- Optional: LangSmith eval tracking ----
+langsmith>=0.1.0,<1.0.0
 
-# ---- MCP server ----
-mcp>=1.0.0                       # Model Context Protocol SDK (optional)
+# ---- Optional: MCP server tooling ----
+mcp>=1.0.0,<2.0.0

@@ -1,99 +1,212 @@
 # Netra.ai — Cognitive Observability Cockpit
 
-An automated log-ops pipeline built with **LangGraph** orchestrating **5 specialized agents**. It ingests live application logs, diagnoses root causes via **RAG grounded in a Chroma runbook knowledge base**, and produces traceable remediations, action checklists, Slack alerts, and expertise-routed Jira tickets — all surfaced in a real-time operator cockpit UI.
+**Hackathon product:** a real-time DevOps incident analysis suite.
 
-The frontend is the **Netra.ai** cyber-HUD (React 19 + Tailwind v4), wired to the real Python backend (no simulated data). Authentication is real **Clerk Google OAuth**.
+Upload (or stream) application logs → a **5-agent LangGraph pipeline** classifies root causes, retrieves **RAG-grounded runbooks** from Chroma, proposes remediations, builds an incident cookbook, files **expertise-routed Jira tickets**, and posts a **Slack** summary — all streamed live over SSE into a cyber-HUD operator cockpit.
 
----
+| Layer | Stack |
+|-------|--------|
+| Frontend | React 19 · Vite 6 · Tailwind v4 · Clerk Google OAuth · Recharts |
+| Backend | FastAPI · LangGraph · LangChain · Chroma · OpenRouter (GPT-4o-mini) |
+| Deploy | Single Render web service (`render.yaml`) — API + SPA from one origin |
+| Repo | https://github.com/mukundayn/C8_Hackathon_Group_9 |
 
-## Architecture
-
-```
-frontend/  React 19 + Vite 6 + Tailwind v4 (Netra cockpit)
-  src/
-    main.tsx                ClerkProvider entry
-    AppRouter.tsx           Clerk route guard (/login, /login/sso-callback, /analyze)
-    types.ts                shared backend + UI contracts
-    lib/                    api.ts (SSE + REST client), sse.ts (parser), mappers.ts
-    hooks/                  useAnalysis, useLiveEvents, useTraffic, useOperator
-    auth/                   LoginPage (Netra look → Clerk OAuth + expertise picker)
-    components/
-      hud/                  Dashboard, MetricGauges
-      flow/                 FlowChart (mapped to the 5 real agents)
-      logs/                 LiveConsole (real webhook feed)
-      charts/               TrafficChart (real /metrics/traffic)
-      alerts/               AlertNotification
-      results/              ResultsPanel (issues / remediations / cookbook)
-      integrations/         SlackBoard, JiraBoard, WebhookConnector
-    utils/                  audio.ts
-    styles/                 index.css (Tailwind v4)
-
-backend/   FastAPI + LangGraph
-  app/
-    main.py                 /analyze (SSE), /events/recent, /metrics/traffic, webhook mount
-    graph.py                classifier → [image_analyzer] → remediation → [fallback] → cookbook → jira → notifier
-    live_store.py           in-memory telemetry ring buffer + traffic aggregation + expertise map
-    webhook.py              external ingestion (/webhook/ingest, /webhook/logs)
-    nodes/                  agent implementations (jira.py does expertise routing)
-    knowledge/              Chroma runbook store + RAG
-  tests/                    pytest unit tests
-```
-
-### Data flow
-1. **Upload** a `.log/.txt/.json` file (or a built-in template) → multipart `POST /api/analyze` with the operator's `expertise`.
-2. Backend streams **SSE** `node` events per agent + a final `done` state. The UI maps node events onto the 5-stage flow chart and renders structured results.
-3. **Jira tickets** are auto-routed: if an issue's category maps to the operator's expertise it's *assigned to you*, otherwise *routed* to the matching specialist queue.
-4. **Live telemetry** (log console + traffic chart) is fed by real external events posted to the webhook connector (n8n, Datadog, Grafana, …), polled from `GET /api/events/recent` and `GET /api/metrics/traffic`.
-
-> API routes are served under both bare paths and `/api/*`. In dev the Vite proxy strips `/api` → `:8000`; in prod FastAPI serves the SPA and `/api/*` from one origin.
+**Product pitch deck (interactive HTML):** open [`docs/presentation.html`](docs/presentation.html) in a browser (arrow keys / click to navigate).
 
 ---
 
-## Local development
+## Features
+
+- **Clerk Google SSO** — real OAuth (not a mock login); expertise preference drives Jira routing
+- **Multipart log upload** + built-in incident templates
+- **SSE streaming** of real LangGraph node events (`classifier → remediation → cookbook → jira → notifier`)
+- **Structured results** — issues, RAG remediations, cookbook checklist
+- **Live telemetry** — webhook ingest (`/api/webhook/logs`), live console, traffic chart
+- **Expertise-based Jira routing** — assign to you or specialist queue
+- **Slack notifier** — mock client with real message preview (swap for Slack SDK later)
+- **CI** — GitHub Actions: pytest + typecheck + vitest + frontend build
+
+---
+
+## Repository layout
+
+```text
+├── frontend/                 # Netra cockpit (Vite)
+│   ├── src/
+│   │   ├── auth/             # Clerk login (Netra-styled)
+│   │   ├── components/       # hud, flow, logs, charts, results, integrations
+│   │   ├── hooks/            # useAnalysis, useLiveEvents, useTraffic, useOperator
+│   │   ├── lib/              # api.ts, sse.ts, mappers.ts (+ tests)
+│   │   └── styles/           # Tailwind v4 entry
+│   └── package.json
+├── backend/                  # FastAPI + LangGraph
+│   ├── app/
+│   │   ├── main.py           # /analyze, /events/recent, /metrics/traffic, webhooks
+│   │   ├── graph.py          # agent orchestration
+│   │   ├── live_store.py     # telemetry ring buffer + expertise map
+│   │   ├── webhook.py        # external ingest
+│   │   ├── nodes/            # classifier, remediation, cookbook, jira, notifier, …
+│   │   ├── knowledge/        # Chroma RAG, hybrid search, confidence rewrite
+│   │   └── evals/            # golden-set quality gate
+│   ├── requirements.txt
+│   ├── requirements-dev.txt
+│   └── tests/
+├── docs/presentation.html    # Interactive product presentation
+├── .github/workflows/ci.yml
+├── render.yaml
+├── build.sh / dev.sh
+└── samples/                  # example log files
+```
+
+---
+
+## Quick start (local)
+
+### Prerequisites
+- Node.js 20+
+- Python 3.11–3.13 recommended
+- Clerk app (Google OAuth enabled) → publishable + secret keys
+- OpenRouter API key
+
+### 1. Backend
 
 ```bash
-# backend
 cd backend
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env      # set OPENROUTER_API_KEY (+ optional HF_TOKEN, Clerk secret)
+cp .env.example .env
+# Edit .env → set OPENROUTER_API_KEY and CLERK_SECRET_KEY
+# Optional locally / required on Render free tier: HF_TOKEN
 uvicorn app.main:app --reload --port 8000
-
-# frontend (separate shell)
-cd frontend
-npm install
-cp .env.example .env      # set CLERK_PUBLISHABLE_KEY
-npm run dev               # http://localhost:5173
 ```
 
-Or run both together: `./dev.sh` (requires a `.venv` and installed deps).
+### 2. Frontend
+
+```bash
+cd frontend
+npm install
+cp .env.example .env
+# Edit .env → set CLERK_PUBLISHABLE_KEY
+npm run dev
+```
+
+Open **http://localhost:5173** → Google sign-in → upload a log or pick a template.
+
+Or start both with `./dev.sh` (Unix; needs a repo-root or `backend/.venv`).
+
+---
+
+## Environment variables
+
+### Frontend (`frontend/.env`)
+
+| Variable | Required | Notes |
+|----------|----------|--------|
+| `CLERK_PUBLISHABLE_KEY` | Yes | Injected at **build time** via Vite `define` |
+| `VITE_API_BASE_URL` | No | Leave empty — same-origin in prod; Vite proxies `/api` in dev |
+
+### Backend (`backend/.env`)
+
+| Variable | Required | Notes |
+|----------|----------|--------|
+| `OPENROUTER_API_KEY` | Yes | LLM calls (asserted at import) |
+| `CLERK_SECRET_KEY` | Recommended | Server-side session verification |
+| `HF_TOKEN` | **Yes on Render free** | Uses HF Inference API for embeddings → stays under 512MB RAM |
+| `LLM_MODEL` | No | Default `openai/gpt-4o-mini` |
+| `CHROMA_DIR` | No | Default `./chroma_db` |
+| `SLACK_CHANNEL` / `JIRA_PROJECT_KEY` | No | Mock integration labels |
+
+Never commit real `.env` files (gitignored). Only `.env.example` is tracked.
+
+---
+
+## API surface (prod = same origin under `/api`)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/health` | Health check |
+| `POST` | `/api/analyze` | Multipart file + optional `expertise` → SSE (`node`, `done`) |
+| `GET` | `/api/events/recent` | Live telemetry buffer |
+| `GET` | `/api/metrics/traffic` | Traffic chart buckets |
+| `POST` | `/api/webhook/logs` | Lightweight n8n / monitor ingest |
+| `POST` | `/api/webhook/ingest` | Full webhook + optional analysis |
+
+Dev: Vite proxies `/api/*` → `http://localhost:8000/*` (strips `/api`).
+
+---
+
+## Agent pipeline
+
+```text
+START
+  → classifier          # parse / cluster / LLM issues
+  → [image_analyzer]    # optional if image payload
+  → remediation         # RAG + confidence rewrite
+  → [fallback]          # unknown issues → HF learn path
+  → cookbook            # checklist
+  → jira                # critical/high + expertise routing
+  → notifier            # Slack preview
+END
+```
 
 ---
 
 ## Testing
 
-| Layer | Tool | What it covers |
-|-------|------|----------------|
-| Backend units | `pytest` | live-store parsing & traffic aggregation, category→expertise map, Jira routing, model defaults, endpoint smoke (TestClient) |
-| Frontend units | `vitest` | SSE frame parser, node→flow-stage mapper, live-event normalization, expertise heuristic |
-| Quality eval | `backend/app/evals` | golden-set category/severity accuracy + keyword recall (demo quality gate) |
-| CI | GitHub Actions | runs backend pytest + frontend typecheck/vitest/build on every PR |
-
 ```bash
-cd backend && pip install -r requirements-dev.txt && pytest
-cd frontend && npm run typecheck && npm test
+# Backend deterministic units
+cd backend
+pip install -r requirements-dev.txt
+pytest
+
+# Frontend
+cd frontend
+npm run typecheck
+npm test
+npm run build
 ```
 
-The heavy pipeline deps (langgraph, chromadb, torch) are optional for the unit suite — endpoint tests skip gracefully if they're absent, so CI stays fast.
+| Layer | Tool | Coverage |
+|-------|------|----------|
+| Backend | pytest | live store, Jira routing, models, endpoint smoke |
+| Frontend | vitest | SSE parser, node→stage mappers |
+| Evals | `backend/app/evals` | golden-set accuracy (demo quality gate) |
+| CI | `.github/workflows/ci.yml` | pytest + typecheck + vitest + build |
 
 ---
 
-## Deployment (careful cutover)
+## Deploy on Render
 
-Deploys as a **single Render web service** via `render.yaml`: the build compiles the frontend, copies `frontend/dist` → `backend/static`, and FastAPI serves the API + static UI.
+1. Connect GitHub repo `mukundayn/C8_Hackathon_Group_9` → **Blueprint** (`render.yaml`) or Web Service.
+2. Set secrets: `OPENROUTER_API_KEY`, `CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `HF_TOKEN`.
+3. Build: `npm install && npm run build` in `frontend/` → copy `dist` → `backend/static` → `pip install -r requirements.txt`.
+4. Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
+5. In **Clerk Dashboard**:
+   - Allowed origin = your Render URL
+   - Google OAuth redirect = `https://<render-host>/login/sso-callback`
 
-1. **Blue-green**: deploy to a preview/second Render service first and smoke-test before touching production. Leave the AI Studio demo (`netra-ai.ai.studio`) untouched as a fallback showcase.
-2. **Clerk**: add the deployment domain to **Allowed Origins** and configure the Google OAuth redirect URL `<domain>/login/sso-callback` *before* cutover — the most common live-auth breakage.
-3. **Build compat**: `CLERK_PUBLISHABLE_KEY` must be present at build time (consumed by the Vite `define`); Tailwind v4 emits `dist/assets/` which matches FastAPI's `/assets` mount + SPA catch-all.
-4. **Secrets** (set in the Render dashboard, `sync: false`): `OPENROUTER_API_KEY`, `CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `HF_TOKEN`. No LLM keys are ever entered in the browser.
-5. **Rollback**: Render retains prior deploys; keep the previous frontend build tagged for instant revert.
+**Free tier notes**
+- Cold start re-seeds Chroma from code (`seed_if_empty`).
+- Set `HF_TOKEN` so embeddings use the Inference API (avoid loading full local torch models into 512MB).
+- Service sleeps after ~15 min idle; first request wakes it.
+
+---
+
+## Demo script (judges)
+
+1. Sign in with Google → pick expertise (e.g. DB + Memory).
+2. Load template **“DB Connection Pool Exhaustion”**.
+3. Watch the 5-agent flow chart stream to 100%.
+4. Show issues / remediations / cookbook in the results panel.
+5. Point at Jira board (assigned vs routed) and Slack preview.
+6. `POST` a sample to `/api/webhook/logs` → live console + traffic chart update.
+
+Open **`docs/presentation.html`** for a full interactive walkthrough of the product story.
+
+---
+
+## License / team
+
+C8 Hackathon Group 9 — Netra.ai incident suite.
