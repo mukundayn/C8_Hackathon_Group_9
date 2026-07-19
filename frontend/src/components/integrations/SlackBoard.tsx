@@ -3,9 +3,10 @@ import type { SlackResult } from "../../types";
 
 interface SlackBoardProps {
   slack: SlackResult | undefined;
+  mode?: "real" | "mock";
 }
 
-export default function SlackBoard({ slack }: SlackBoardProps) {
+export default function SlackBoard({ slack, mode = "mock" }: SlackBoardProps) {
   const channel = slack?.channel ?? "#incidents";
   const lines = (slack?.text_preview ?? "").split("\n").filter(Boolean);
 
@@ -18,16 +19,18 @@ export default function SlackBoard({ slack }: SlackBoardProps) {
             <span className="p-1 rounded bg-slate-900 border border-slate-800 text-cyan-400">
               <Slack className="w-3.5 h-3.5" />
             </span>
-            Slack Notifier (MCP)
+            Slack Notifier
           </h3>
           <span
             className={`px-2 py-0.5 rounded text-[9px] font-mono border ${
-              slack
+              mode === "real"
                 ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-400"
-                : "bg-slate-900 border-slate-800 text-slate-500"
+                : slack
+                  ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-400"
+                  : "bg-slate-900 border-slate-800 text-slate-500"
             }`}
           >
-            {slack ? "DELIVERED" : "STANDBY"}
+            {mode === "real" ? (slack ? "LIVE · DELIVERED" : "LIVE · STANDBY") : slack ? "MOCK · DELIVERED" : "MOCK · STANDBY"}
           </span>
         </div>
 

@@ -211,10 +211,9 @@ async def analyze(request: Request):
                                     file="backend/app/nodes/remediation.py",
                                     node="remediation",
                                     message=(
-                                        f"ENTERING remediation (blocking) · ~{n_issues} issue(s) → "
-                                        "per-issue RAG + optional rewrite LLM + 1 structured LLM. "
-                                        "No further UI lines until this node returns — watch server prints "
-                                        "[remediation] RAG k/n …"
+                                        f"ENTERING remediation (blocking) · top {min(n_issues, 2)}/{n_issues} issue(s) → "
+                                        "fast RAG (no LLM-rerank/rewrite) + 1 structured LLM (≤90s). "
+                                        "Watch server prints [remediation] RAG k/n …"
                                     ),
                                 )
                             ),
@@ -287,6 +286,19 @@ def metrics_hud():
         "ingest_total": live_store.ingest_total(),
         "avg_response_ms": avg_ms,
         "critical_incidents": live_store.critical_count(),
+    }
+
+
+@api.get("/integrations/status")
+def integrations_status():
+    """Whether Jira/Slack will hit real APIs or stay mock (no secrets leaked)."""
+    from app.config import config
+
+    return {
+        "jira": "real" if config.use_real_jira else "mock",
+        "slack": "real" if config.use_real_slack else "mock",
+        "jira_project": config.JIRA_PROJECT_KEY,
+        "slack_channel": config.SLACK_CHANNEL,
     }
 
 

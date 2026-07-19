@@ -1,10 +1,11 @@
 import os
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 from app.state import IncidentState
 from app.models import RemediationOutput
 from app.llm import get_llm
 from app.knowledge.query_builder import build_issue_query, build_filters_for_issue
-from app.knowledge.confidence import retrieve_with_confidence
+from app.knowledge.runbook_store import retrieve_with_scores
 from app.config import config
 from app.nodes._trace import trace_event
 
@@ -31,10 +32,10 @@ RETRIEVED RUNBOOKS:
 
 _DANGEROUS = ("rm -rf", "drop database", "delete from", "terminate all", "mkfs", "> /dev")
 
-
 _SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-# Cap per-issue RAG+rewrite work so large classifier outputs cannot stall the SSE stream.
-_MAX_REMEDIATE_ISSUES = int(os.getenv("RAG_MAX_ISSUES", "3"))
+# Keep small — each issue used to trigger RAG + optional rewrite + LLM-rerank storms.
+_MAX_REMEDIATE_ISSUES = int(os.getenv("RAG_MAX_ISSUES", "2"))
+_LLM_TIMEOUT_S = int(os.getenv("REMEDIATION_LLM_TIMEOUT", "90"))
 
 
 def remediation_node(state: IncidentState) -> dict:
@@ -42,7 +43,6 @@ def remediation_node(state: IncidentState) -> dict:
     if not issues:
         return {"remediations": [], "trace": [trace_event("remediation", "No issues to remediate.")]}
 
-    # Prioritize critical/high; RAG-per-issue is expensive (embed + optional rewrite LLM).
     ranked = sorted(
         issues,
         key=lambda i: _SEV_RANK.get(str(i.get("severity", "")).lower(), 9),
@@ -51,15 +51,13 @@ def remediation_node(state: IncidentState) -> dict:
     skipped = len(issues) - len(work)
     print(
         f"[remediation] start · {len(work)}/{len(issues)} issue(s) "
-        f"(skipped {skipped} lower-severity) · RAG then 1 LLM call",
+        f"(skipped {skipped}) · fast RAG (no rewrite/no LLM-rerank) then 1 LLM",
         flush=True,
     )
 
-    # ---- Hybrid RAG + confidence gate (low score -> rewrite query -> re-retrieve) ----
     seen: dict[str, str] = {}
     grounding_by_issue: dict[str, list[str]] = {}
     retrieval_meta: dict[str, dict] = {}
-    rewrites = 0
 
     for idx, i in enumerate(work, 1):
         print(
@@ -69,16 +67,21 @@ def remediation_node(state: IncidentState) -> dict:
         )
         query = build_issue_query(i, sibling_issues=work)
         filters = build_filters_for_issue(i)
-        docs, conf_meta = retrieve_with_confidence(
-            query,
-            issue=i,
-            k=config.RAG_TOP_K,
-            filters=filters or None,
-        )
-        if conf_meta.get("rewritten"):
-            rewrites += 1
-            print(f"[remediation]   query rewritten for {i.get('id')}", flush=True)
+        # Fast path: vector (+ optional BM25 hybrid). Never LLM-rerank here —
+        # cross-encoder miss used to fall back to N OpenRouter calls per issue.
+        try:
+            scored = retrieve_with_scores(
+                query,
+                k=config.RAG_TOP_K,
+                filters=filters or None,
+                use_hybrid=config.RAG_USE_HYBRID,
+                use_rerank=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[remediation]   RAG failed for {i.get('id')}: {exc}", flush=True)
+            scored = []
 
+        docs = [d for d, _ in scored]
         titles = []
         for d in docs:
             title = d.metadata.get("original_title") or d.metadata.get("title", "runbook")
@@ -90,14 +93,16 @@ def remediation_node(state: IncidentState) -> dict:
         retrieval_meta[i["id"]] = {
             "filters": filters,
             "hybrid": config.RAG_USE_HYBRID,
-            "rerank": config.RAG_USE_RERANK,
+            "rerank": False,
             "docs": titles,
-            **conf_meta,
+            "fast_path": True,
         }
         print(f"[remediation]   hits={len(titles)} · {titles[:2]}", flush=True)
 
-    runbooks_text = "\n\n".join(f"[{title}]\n{content}" for title, content in seen.items()) \
+    runbooks_text = (
+        "\n\n".join(f"[{title}]\n{content}" for title, content in seen.items())
         or "No matching runbooks found."
+    )
 
     issues_text = "\n".join(
         f"- id={i['id']} | {i['severity'].upper()} | {i['category']} | "
@@ -105,11 +110,45 @@ def remediation_node(state: IncidentState) -> dict:
         for i in work
     )
 
-    print("[remediation] invoking structured LLM for remediations…", flush=True)
-    llm = get_llm(temperature=0.2).with_structured_output(RemediationOutput, method="function_calling")
-    result: RemediationOutput = llm.invoke(
-        REMEDIATION_PROMPT.format(issues=issues_text, runbooks=runbooks_text)
+    print(
+        f"[remediation] invoking structured LLM (timeout={_LLM_TIMEOUT_S}s)…",
+        flush=True,
     )
+    llm = get_llm(temperature=0.2).with_structured_output(
+        RemediationOutput, method="function_calling"
+    )
+    prompt = REMEDIATION_PROMPT.format(issues=issues_text, runbooks=runbooks_text)
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            fut = pool.submit(llm.invoke, prompt)
+            result: RemediationOutput = fut.result(timeout=_LLM_TIMEOUT_S)
+    except FuturesTimeout:
+        print("[remediation] LLM TIMEOUT — returning empty remediations", flush=True)
+        return {
+            "remediations": [],
+            "trace": [
+                trace_event(
+                    "remediation",
+                    f"Timed out after {_LLM_TIMEOUT_S}s waiting for remediation LLM. "
+                    "Check OPENROUTER_API_KEY / network.",
+                    {"retrieval": retrieval_meta, "timeout": True},
+                )
+            ],
+        }
+    except Exception as exc:  # noqa: BLE001
+        print(f"[remediation] LLM failed: {exc}", flush=True)
+        return {
+            "remediations": [],
+            "trace": [
+                trace_event(
+                    "remediation",
+                    f"Remediation LLM failed: {exc}",
+                    {"retrieval": retrieval_meta, "error": str(exc)},
+                )
+            ],
+        }
+
     print(f"[remediation] LLM returned {len(result.remediations)} remediation(s)", flush=True)
 
     safe = [
@@ -118,7 +157,6 @@ def remediation_node(state: IncidentState) -> dict:
         if not any(bad in r.suggested_command.lower() for bad in _DANGEROUS)
     ]
 
-    # Authoritative KB hit/miss from retrieval (not LLM-invented grounded_in names).
     hits = 0
     misses = 0
     for r in safe:
@@ -135,17 +173,18 @@ def remediation_node(state: IncidentState) -> dict:
 
     return {
         "remediations": safe,
-        "trace": [trace_event(
-            "remediation",
-            f"Proposed {len(safe)} remediation(s) — KB HIT={hits} MISS={misses} "
-            f"(retrieved chunks={len(seen)}, hybrid={config.RAG_USE_HYBRID}, "
-            f"rerank={config.RAG_USE_RERANK}, query_rewrites={rewrites}).",
-            {
-                "remediations": safe,
-                "retrieved_runbooks": grounding_by_issue,
-                "retrieval": retrieval_meta,
-                "kb_hits": hits,
-                "kb_misses": misses,
-            },
-        )],
+        "trace": [
+            trace_event(
+                "remediation",
+                f"Proposed {len(safe)} remediation(s) — KB HIT={hits} MISS={misses} "
+                f"(retrieved chunks={len(seen)}, fast_rag=True, issues={len(work)}).",
+                {
+                    "remediations": safe,
+                    "retrieved_runbooks": grounding_by_issue,
+                    "retrieval": retrieval_meta,
+                    "kb_hits": hits,
+                    "kb_misses": misses,
+                },
+            )
+        ],
     }

@@ -216,3 +216,22 @@ export async function approveHitl(body: HitlApproveRequest): Promise<HitlApprove
 export function webhookIngestUrl(): string {
   return `${window.location.origin}/api/webhook/logs`;
 }
+
+export interface IntegrationStatus {
+  jira: "real" | "mock";
+  slack: "real" | "mock";
+  jira_project?: string;
+  slack_channel?: string;
+}
+
+export async function fetchIntegrationStatus(): Promise<IntegrationStatus> {
+  const res = await fetch(apiUrl("/api/integrations/status"), { credentials: "same-origin" });
+  if (!res.ok) throw new Error(`Integrations status failed: ${res.status}`);
+  const data = (await res.json()) as Partial<IntegrationStatus>;
+  return {
+    jira: data.jira === "real" ? "real" : "mock",
+    slack: data.slack === "real" ? "real" : "mock",
+    jira_project: data.jira_project,
+    slack_channel: data.slack_channel,
+  };
+}

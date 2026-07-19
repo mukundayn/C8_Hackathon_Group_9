@@ -228,26 +228,25 @@ export default function FlowChart({ agents, overallProgress, debugLines = [] }: 
               <g
                 key={n.id}
                 id={`agent-${n.id}`}
-                className={isActive ? "lg-node-active" : undefined}
                 onMouseEnter={playHoverTick}
                 style={{ cursor: "default" }}
               >
                 {isActive && (
                   <rect
                     className="lg-node-active-ring"
-                    x={n.x - 4}
-                    y={n.y - 4}
-                    width={n.w + 8}
-                    height={n.h + 8}
+                    x={n.x - 5}
+                    y={n.y - 5}
+                    width={n.w + 10}
+                    height={n.h + 10}
                     rx={rx + 2}
                     ry={rx + 2}
                     fill="none"
                     stroke="#22d3ee"
-                    strokeWidth={1.5}
-                    opacity={0.7}
+                    strokeWidth={2}
                   />
                 )}
                 <rect
+                  className={isActive ? "lg-node-active-fill lg-node-active-stroke" : undefined}
                   x={n.x}
                   y={n.y}
                   width={n.w}
@@ -263,6 +262,22 @@ export default function FlowChart({ agents, overallProgress, debugLines = [] }: 
                   strokeWidth={isActive ? 2.4 : showTick ? 2 : 1.6}
                   strokeDasharray={n.optional ? "5 3" : undefined}
                 />
+                {isActive && (
+                  <text
+                    x={n.x + n.w / 2}
+                    y={n.y - 8}
+                    textAnchor="middle"
+                    className="lg-node-active-ring"
+                    style={{
+                      fontSize: 9,
+                      fontFamily: "ui-monospace, monospace",
+                      fontWeight: 700,
+                      fill: "#22d3ee",
+                    }}
+                  >
+                    ● LIVE
+                  </text>
+                )}
                 <text
                   x={n.x + n.w / 2}
                   y={n.y + n.h / 2 - (agent && !n.terminal ? 6 : 0)}
@@ -274,6 +289,7 @@ export default function FlowChart({ agents, overallProgress, debugLines = [] }: 
                     fontWeight: 700,
                     fill:
                       showTick ? "#6ee7b7" : isActive ? "#67e8f8" : "#94a3b8",
+                    pointerEvents: "none",
                   }}
                 >
                   {n.label}
@@ -287,6 +303,7 @@ export default function FlowChart({ agents, overallProgress, debugLines = [] }: 
                       fontSize: 9,
                       fontFamily: "ui-monospace, monospace",
                       fill: isActive ? "#22d3ee" : "#64748b",
+                      pointerEvents: "none",
                     }}
                   >
                     {st === "active"

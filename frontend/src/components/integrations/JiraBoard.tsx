@@ -3,9 +3,10 @@ import type { JiraTicket } from "../../types";
 
 interface JiraBoardProps {
   tickets: JiraTicket[];
+  mode?: "real" | "mock";
 }
 
-export default function JiraBoard({ tickets }: JiraBoardProps) {
+export default function JiraBoard({ tickets, mode = "mock" }: JiraBoardProps) {
   return (
     <div className="xl:col-span-5 flex flex-col justify-between bg-slate-950/60 border border-slate-800/80 rounded-xl p-5 relative overflow-hidden">
       <div className="absolute top-0 right-0 w-32 h-32 bg-pink-500/5 rounded-full blur-2xl pointer-events-none" />
@@ -17,8 +18,14 @@ export default function JiraBoard({ tickets }: JiraBoardProps) {
             </span>
             Jira Ticketing & Expert Router
           </h3>
-          <span className="px-2 py-0.5 rounded text-[9px] font-mono border bg-pink-950/20 border-pink-500/40 text-pink-400">
-            ROUTING_HEURISTIC_v2
+          <span
+            className={`px-2 py-0.5 rounded text-[9px] font-mono border ${
+              mode === "real"
+                ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-400"
+                : "bg-pink-950/20 border-pink-500/40 text-pink-400"
+            }`}
+          >
+            {mode === "real" ? "LIVE_JIRA" : "MOCK_JIRA"}
           </span>
         </div>
 

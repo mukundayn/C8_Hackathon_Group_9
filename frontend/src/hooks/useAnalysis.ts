@@ -78,7 +78,13 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
           onDebug: (line) => {
             const stamped: DebugLogLine = {
               ...line,
-              ts: new Date().toISOString().slice(11, 19),
+              ts: new Intl.DateTimeFormat("en-GB", {
+                timeZone: "Asia/Kolkata",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+              }).format(new Date()),
             };
             setDebugLines((prev) => [...prev.slice(-200), stamped]);
           },

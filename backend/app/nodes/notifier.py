@@ -1,5 +1,5 @@
 from app.state import IncidentState
-from app.integrations.slack_client import MockSlackClient
+from app.integrations.slack_client import SlackNotifier
 from app.nodes._trace import trace_event
 
 
@@ -39,7 +39,7 @@ def post_slack_for_issues(
     tickets: list[dict],
     cookbook: dict | None = None,
 ) -> dict:
-    client = MockSlackClient()
+    client = SlackNotifier()
     text = format_slack_message(issues, tickets, cookbook)
     result = client.post_message(text=text)
     return result.model_dump()

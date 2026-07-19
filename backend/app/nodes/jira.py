@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.integrations.jira_client import MockJiraClient
+from app.integrations.jira_client import JiraTicketManager
 from app.live_store import expertise_for_category
 from app.nodes._trace import trace_event
 from app.state import IncidentState
@@ -70,7 +70,7 @@ def create_tickets_for_issues(
     operator_expertise: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Create + route Jira tickets for the given issues (used by HITL approve)."""
-    client = MockJiraClient()
+    client = JiraTicketManager()
     rem_by_id = {r.get("issue_id"): r for r in (remediations or []) if isinstance(r, dict)}
     expertise = {str(e).strip() for e in (operator_expertise or []) if str(e).strip()}
 
@@ -87,7 +87,7 @@ def create_tickets_for_issues(
 
         ticket = client.create_ticket(
             summary=title,
-            severity=severity,
+            severity=str(severity),
             issue_id=str(issue_id),
             description=(
                 f"{summary}\n\nAffected: {service}\n"

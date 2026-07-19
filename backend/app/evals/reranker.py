@@ -86,12 +86,14 @@ def rerank(
 ) -> list[tuple[Document, float]]:
     """Rerank documents using the best available method.
 
-    Tries cross-encoder first, falls back to LLM-based reranking.
+    Cross-encoder only. Does NOT fall back to per-doc LLM scoring (that path
+    stalled analyze for 10+ minutes when sentence-transformers was unavailable).
     """
     encoder = get_cross_encoder()
     if encoder is not None:
         return rerank_with_cross_encoder(query, documents, top_k)
-    return rerank_with_llm(query, documents, top_k)
+    logger.warning("Cross-encoder unavailable; using vector order (no LLM rerank).")
+    return [(doc, 1.0 / (i + 1)) for i, doc in enumerate(documents[:top_k])]
 
 
 def rechunk_documents(

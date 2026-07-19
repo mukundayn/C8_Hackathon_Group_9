@@ -113,14 +113,17 @@ def _ingest_loose_body(payload: dict[str, Any], default_source: str = "n8n") -> 
         logger.info("[webhook/logs] ingested %d line(s) from source=%s", added, source)
         return {"status": "ok", "ingested": added, "buffer_size": len(live_store.recent())}
 
-    if "message" in payload:
+    # n8n Parse often uses logEntry / fileName instead of message / service
+    message = payload.get("message") or payload.get("logEntry") or payload.get("text")
+    if message is not None and str(message).strip():
         ev = live_store.add_event(
-            message=str(payload["message"]),
-            severity=str(payload.get("severity", "INFO")),
-            service=str(payload.get("service", source)),
+            message=str(message),
+            severity=str(payload.get("severity") or payload.get("level") or "INFO"),
+            service=str(payload.get("service") or payload.get("fileName") or source),
             category=payload.get("category"),
             source=source,
             response_time_ms=payload.get("response_time_ms"),
+            timestamp=payload.get("timestamp") if isinstance(payload.get("timestamp"), str) else None,
         )
         logger.info("[webhook/logs] ingested 1 event id=%s source=%s", ev["id"], source)
         return {

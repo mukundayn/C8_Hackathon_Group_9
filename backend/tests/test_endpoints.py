@@ -84,6 +84,15 @@ def test_hitl_approve_creates_jira_and_slack(client):
     assert body["jira_tickets"][0]["issue_id"] == "qx-1"
     assert body["slack_result"].get("channel")
 
+
+def test_integrations_status_shape(client):
+    res = client.get("/api/integrations/status")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["jira"] in ("real", "mock")
+    assert body["slack"] in ("real", "mock")
+    assert "jira_project" in body
+
 def test_bare_and_prefixed_paths_both_exist(client):
     # dev proxy strips /api → bare path; prod uses /api directly.
     assert client.get("/events/recent").status_code == 200

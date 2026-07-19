@@ -12,7 +12,10 @@ import re
 import time
 import uuid
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+# Cockpit / live feed timestamps are India Standard Time (UTC+05:30).
+_IST = timezone(timedelta(hours=5, minutes=30))
 from threading import Lock
 from typing import Any, Deque, Optional
 
@@ -111,7 +114,7 @@ def add_event(
     process_ms = max(1, int(round((time.perf_counter() - t0) * 1000)))
     event = {
         "id": uuid.uuid4().hex,
-        "timestamp": timestamp or datetime.now(timezone.utc).strftime("%H:%M:%S"),
+        "timestamp": timestamp or datetime.now(_IST).strftime("%H:%M:%S"),
         "service": service,
         "severity": sev,
         "message": message.strip(),

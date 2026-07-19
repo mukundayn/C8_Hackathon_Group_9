@@ -81,25 +81,50 @@ body {
   }
 }
 
-/* LangGraph flowchart — active node blink */
-@keyframes lg-node-blink {
+/* LangGraph flowchart — active node blink (SVG-safe: animate rects, not <g> filter) */
+@keyframes lg-node-fill-blink {
   0%,
   100% {
-    opacity: 1;
-    filter: drop-shadow(0 0 4px rgba(34, 211, 238, 0.35));
+    fill-opacity: 1;
   }
   50% {
-    opacity: 0.45;
-    filter: drop-shadow(0 0 10px rgba(34, 211, 238, 0.75));
+    fill-opacity: 0.45;
   }
 }
 
-.lg-node-active {
-  animation: lg-node-blink 0.9s ease-in-out infinite;
+@keyframes lg-node-stroke-blink {
+  0%,
+  100% {
+    stroke-opacity: 1;
+    stroke-width: 2.4px;
+  }
+  50% {
+    stroke-opacity: 0.35;
+    stroke-width: 3.6px;
+  }
+}
+
+@keyframes lg-ring-pulse {
+  0%,
+  100% {
+    stroke-opacity: 0.95;
+    opacity: 1;
+  }
+  50% {
+    stroke-opacity: 0.15;
+    opacity: 0.4;
+  }
+}
+
+.lg-node-active-fill {
+  animation: lg-node-fill-blink 0.75s ease-in-out infinite;
+}
+
+.lg-node-active-stroke {
+  animation: lg-node-stroke-blink 0.75s ease-in-out infinite;
 }
 
 .lg-node-active-ring {
-  animation: lg-node-blink 0.9s ease-in-out infinite;
-  transform-origin: center;
-  transform-box: fill-box;
+  animation: lg-ring-pulse 0.75s ease-in-out infinite;
+  pointer-events: none;
 }

@@ -21,7 +21,7 @@ import { useHudMetrics } from "../../hooks/useHudMetrics";
 import { useOperator } from "../../hooks/useOperator";
 import { AGENT_ORDER } from "../../lib/mappers";
 import { summarizeKbPath } from "../../lib/kbPath";
-import { approveHitl } from "../../lib/api";
+import { approveHitl, fetchIntegrationStatus, type IntegrationStatus } from "../../lib/api";
 import type { AnomalyAlert, JiraTicket, SlackResult } from "../../types";
 import {
   isSoundEnabled,
@@ -95,13 +95,48 @@ export default function Dashboard() {
   const [hitlAlerts, setHitlAlerts] = useState<AnomalyAlert[]>([]);
   const [approvedTickets, setApprovedTickets] = useState<JiraTicket[]>([]);
   const [approvedSlack, setApprovedSlack] = useState<SlackResult | undefined>();
+  const [integrationMode, setIntegrationMode] = useState<IntegrationStatus>({
+    jira: "mock",
+    slack: "mock",
+  });
   const hitlSeededFor = useRef<string | null>(null);
 
   useEffect(() => {
-    const update = () => setClockTime(new Date().toISOString().replace("T", "  ").substring(0, 21) + " UTC");
+    const update = () => {
+      const fmt = new Intl.DateTimeFormat("en-IN", {
+        timeZone: "Asia/Kolkata",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      });
+      // en-IN often yields DD/MM/YYYY, HH:MM:SS — normalize spacing + IST label
+      const parts = fmt.formatToParts(new Date());
+      const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+      setClockTime(
+        `${get("year")}-${get("month")}-${get("day")}  ${get("hour")}:${get("minute")}:${get("second")} IST`,
+      );
+    };
     update();
     const id = setInterval(update, 1000);
     return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchIntegrationStatus()
+      .then((s) => {
+        if (!cancelled) setIntegrationMode(s);
+      })
+      .catch(() => {
+        /* keep mock badges */
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Seed HITL threat alerts when analysis finishes with newly-learned criticals.
@@ -112,7 +147,13 @@ export default function Dashboard() {
     hitlSeededFor.current = seedKey;
     setApprovedTickets([]);
     setApprovedSlack(undefined);
-    const now = new Date().toISOString().slice(11, 19);
+    const now = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Kolkata",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).format(new Date());
     setHitlAlerts(
       pending.map(
         (p): AnomalyAlert => ({
@@ -412,8 +453,11 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-          <SlackBoard slack={displaySlack && Object.keys(displaySlack).length ? displaySlack : undefined} />
-          <JiraBoard tickets={displayTickets} />
+          <SlackBoard
+            slack={displaySlack && Object.keys(displaySlack).length ? displaySlack : undefined}
+            mode={integrationMode.slack}
+          />
+          <JiraBoard tickets={displayTickets} mode={integrationMode.jira} />
           <WebhookConnector expertise={operator.expertise} connected={live.connected} />
         </div>
       </section>
