@@ -10,7 +10,6 @@ import { parseSseFrames, type SseFrame } from "./sse";
 const BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 
 function apiUrl(path: string): string {
-  // path must start with /
   return `${BASE}${path}`;
 }
 
@@ -18,6 +17,10 @@ async function readErrorDetail(res: Response): Promise<string> {
   try {
     const text = await res.text();
     if (!text) return res.statusText || String(res.status);
+    // Render/WAF "Blocked" HTML pages — keep the message short.
+    if (text.includes("<!DOCTYPE html>") || text.includes("<title>Blocked</title>")) {
+      return "Edge firewall blocked the request. Retry with JSON analyze (redeploy latest) or a smaller/simpler log.";
+    }
     try {
       const json = JSON.parse(text) as { detail?: unknown };
       if (typeof json.detail === "string") return json.detail;
@@ -30,13 +33,48 @@ async function readErrorDetail(res: Response): Promise<string> {
   }
 }
 
+async function consumeAnalyzeStream(
+  res: Response,
+  { onNode, onDone }: Pick<AnalyzeCallbacks, "onNode" | "onDone">,
+): Promise<boolean> {
+  if (!res.body) return false;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let sawDone = false;
+
+  const dispatch = (events: SseFrame[]): void => {
+    for (const { evt, data } of events) {
+      if (evt === "node") onNode?.(data as NodeEvent);
+      else if (evt === "done") {
+        sawDone = true;
+        onDone?.(data as AnalysisResult);
+      }
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parsed = parseSseFrames(buffer);
+    buffer = parsed.rest;
+    dispatch(parsed.events);
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    const parsed = parseSseFrames(buffer.endsWith("\n\n") ? buffer : `${buffer}\n\n`);
+    dispatch(parsed.events);
+  }
+  return sawDone;
+}
+
 /**
  * Stream a log analysis from the real backend.
  *
- * Sends the file as multipart/form-data to POST /api/analyze and dispatches
- * the `node` / `done` SSE events emitted by the LangGraph pipeline.
- * Operator expertise (optional) is forwarded so the backend can route Jira
- * tickets to the active operator vs a specialist queue.
+ * Sends JSON (not multipart) to avoid Render/WAF 403 "Blocked" pages that
+ * frequently trigger on multipart uploads containing log-attack patterns.
  */
 export async function analyze(
   file: File,
@@ -46,54 +84,27 @@ export async function analyze(
   let sawDone = false;
   const url = apiUrl("/api/analyze");
   try {
-    const form = new FormData();
-    form.append("file", file);
-    if (expertise.length > 0) {
-      form.append("expertise", expertise.join(","));
-    }
-
-    // Do NOT set Content-Type — the browser must add the multipart boundary.
+    const logText = await file.text();
     const res = await fetch(url, {
       method: "POST",
-      body: form,
-      headers: { Accept: "text/event-stream" },
+      headers: {
+        Accept: "text/event-stream",
+        "Content-Type": "application/json",
+      },
       credentials: "same-origin",
+      body: JSON.stringify({
+        log_text: logText,
+        filename: file.name || "upload.log",
+        expertise: expertise.join(","),
+      }),
     });
-    if (!res.ok || !res.body) {
+
+    if (!res.ok) {
       const detail = await readErrorDetail(res);
       throw new Error(`Request failed: ${res.status} (${url}) — ${detail}`);
     }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    const dispatch = (events: SseFrame[]): void => {
-      for (const { evt, data } of events) {
-        if (evt === "node") onNode?.(data as NodeEvent);
-        else if (evt === "done") {
-          sawDone = true;
-          onDone?.(data as AnalysisResult);
-        }
-      }
-    };
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const parsed = parseSseFrames(buffer);
-      buffer = parsed.rest;
-      dispatch(parsed.events);
-    }
-
-    // Flush any trailing frame left without a final blank line.
-    buffer += decoder.decode();
-    if (buffer.trim()) {
-      const parsed = parseSseFrames(buffer.endsWith("\n\n") ? buffer : `${buffer}\n\n`);
-      dispatch(parsed.events);
-    }
-
+    sawDone = await consumeAnalyzeStream(res, { onNode, onDone });
     if (!sawDone) {
       onError?.(new Error("Analysis stream ended before results were received."));
     }
@@ -102,7 +113,7 @@ export async function analyze(
   }
 }
 
-/** Convenience: turn a sample-template string into a File for the multipart upload. */
+/** Convenience: turn a sample-template string into a File for the analyze helper. */
 export function textToLogFile(text: string, filename: string): File {
   return new File([text], filename, { type: "text/plain" });
 }

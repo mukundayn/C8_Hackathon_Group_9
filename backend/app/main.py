@@ -4,7 +4,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, Form, APIRouter, HTTPException, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -89,20 +89,54 @@ def ping():
 
 
 @api.post("/analyze")
-async def analyze(
-    request: Request,
-    file: UploadFile = File(...),
-    expertise: str = Form(""),
-):
-    print(f"[analyze] POST from {request.client.host if request.client else '?'} "
-          f"file={file.filename!r} content_type={file.content_type!r}")
-    raw = (await file.read()).decode("utf-8", errors="replace")
+async def analyze(request: Request):
+    """Stream LangGraph analysis over SSE.
+
+    Prefer JSON body (avoids Render/WAF 403 on multipart uploads)::
+
+        {"log_text": "...", "filename": "app.log", "expertise": "DB,Memory"}
+
+    Multipart ``file`` + ``expertise`` is still accepted for local tooling.
+    """
+    content_type = (request.headers.get("content-type") or "").lower()
+    filename = "upload.log"
+    expertise_raw = ""
+    raw = ""
+
+    if "application/json" in content_type:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="JSON body must be an object")
+        raw = str(body.get("log_text") or body.get("logs") or body.get("text") or "")
+        filename = str(body.get("filename") or filename)
+        expertise_raw = str(body.get("expertise") or "")
+    elif "multipart/form-data" in content_type:
+        form = await request.form()
+        upload = form.get("file")
+        expertise_raw = str(form.get("expertise") or "")
+        if upload is None:
+            raise HTTPException(status_code=400, detail="Missing form field 'file'")
+        data = await upload.read()  # type: ignore[union-attr]
+        raw = data.decode("utf-8", errors="replace") if isinstance(data, (bytes, bytearray)) else str(data)
+        filename = getattr(upload, "filename", None) or filename
+    else:
+        # Fallback: raw text body
+        raw = (await request.body()).decode("utf-8", errors="replace")
+
+    if not raw.strip():
+        raise HTTPException(status_code=400, detail="No log text provided")
+
+    print(
+        f"[analyze] POST from {request.client.host if request.client else '?'} "
+        f"filename={filename!r} chars={len(raw)} ct={content_type[:40]!r}"
+    )
+
     thread_id = str(uuid.uuid4())
     run_config = {"configurable": {"thread_id": thread_id}}
     initial = {
         "raw_logs": raw,
-        "filename": file.filename,
-        "operator_expertise": _parse_expertise(expertise),
+        "filename": filename,
+        "operator_expertise": _parse_expertise(expertise_raw),
         "trace": [],
     }
 
