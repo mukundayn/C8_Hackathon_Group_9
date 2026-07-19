@@ -4,9 +4,9 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, Form, APIRouter
+from fastapi import FastAPI, UploadFile, File, Form, APIRouter, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
@@ -30,17 +30,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Netra.ai — Incident Analysis Suite", lifespan=lifespan)
 
-# CORS_ORIGINS env var: comma-separated list of allowed origins.
-# In production set it to your deployed frontend URL (or "*" for open access).
-# Defaults to localhost for local dev.
-_cors_origins_raw = os.getenv("CORS_ORIGINS", "http://localhost:5173")
-_cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+# CORS: default "*" so Render same-origin + local Vite both work.
+# Override with CORS_ORIGINS=https://a.com,https://b.com for lockdown.
+_cors_origins_raw = os.getenv("CORS_ORIGINS", "*")
+if _cors_origins_raw.strip() == "*":
+    _cors_origins = ["*"]
+else:
+    _cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=_cors_origins != ["*"],
 )
 
 
@@ -79,8 +82,20 @@ def _parse_expertise(raw: str) -> list[str]:
 api = APIRouter()
 
 
+@api.get("/ping")
+def ping():
+    """Cheap connectivity check for the UI / Render smoke tests."""
+    return {"ok": True, "service": "netra-api"}
+
+
 @api.post("/analyze")
-async def analyze(file: UploadFile = File(...), expertise: str = Form("")):
+async def analyze(
+    request: Request,
+    file: UploadFile = File(...),
+    expertise: str = Form(""),
+):
+    print(f"[analyze] POST from {request.client.host if request.client else '?'} "
+          f"file={file.filename!r} content_type={file.content_type!r}")
     raw = (await file.read()).decode("utf-8", errors="replace")
     thread_id = str(uuid.uuid4())
     run_config = {"configurable": {"thread_id": thread_id}}
@@ -131,10 +146,37 @@ app.include_router(api, prefix="/api")  # same-origin API for production
 #   /assets/*  → hashed JS/CSS bundles
 #   /           → index.html (and any deep route via the catch-all below)
 # This is a no-op in local dev if STATIC_DIR doesn't exist yet.
+def _is_reserved_spa_path(full_path: str) -> bool:
+    first = full_path.lstrip("/").split("/", 1)[0]
+    return first in {
+        "api",
+        "health",
+        "docs",
+        "redoc",
+        "openapi.json",
+        "webhook",
+        "assets",
+    }
+
+
 if STATIC_DIR.is_dir():
-    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+    assets_dir = STATIC_DIR / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
     @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
-    async def serve_spa(full_path: str) -> HTMLResponse:  # noqa: ARG001
-        """Catch-all: return index.html so React Router handles client-side routes."""
-        return HTMLResponse((STATIC_DIR / "index.html").read_text())
+    async def serve_spa(full_path: str) -> HTMLResponse:
+        """Catch-all for client routes — never shadows API paths."""
+        if _is_reserved_spa_path(full_path):
+            raise HTTPException(status_code=404, detail="Not found")
+        index = STATIC_DIR / "index.html"
+        if not index.is_file():
+            raise HTTPException(status_code=404, detail="Frontend not built")
+        return HTMLResponse(index.read_text(encoding="utf-8"))
+else:
+    @app.get("/")
+    def root():
+        return JSONResponse({
+            "service": "netra-api",
+            "hint": "STATIC_DIR not set — API only. Use Vite dev server for UI.",
+        })

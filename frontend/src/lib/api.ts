@@ -7,7 +7,28 @@ import type {
 } from "../types";
 import { parseSseFrames, type SseFrame } from "./sse";
 
-const BASE = import.meta.env.VITE_API_BASE_URL ?? "";
+const BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+
+function apiUrl(path: string): string {
+  // path must start with /
+  return `${BASE}${path}`;
+}
+
+async function readErrorDetail(res: Response): Promise<string> {
+  try {
+    const text = await res.text();
+    if (!text) return res.statusText || String(res.status);
+    try {
+      const json = JSON.parse(text) as { detail?: unknown };
+      if (typeof json.detail === "string") return json.detail;
+      return text.slice(0, 280);
+    } catch {
+      return text.slice(0, 280);
+    }
+  } catch {
+    return res.statusText || String(res.status);
+  }
+}
 
 /**
  * Stream a log analysis from the real backend.
@@ -23,6 +44,7 @@ export async function analyze(
   expertise: Expertise[] = [],
 ): Promise<void> {
   let sawDone = false;
+  const url = apiUrl("/api/analyze");
   try {
     const form = new FormData();
     form.append("file", file);
@@ -30,8 +52,17 @@ export async function analyze(
       form.append("expertise", expertise.join(","));
     }
 
-    const res = await fetch(`${BASE}/api/analyze`, { method: "POST", body: form });
-    if (!res.ok || !res.body) throw new Error(`Request failed: ${res.status}`);
+    // Do NOT set Content-Type — the browser must add the multipart boundary.
+    const res = await fetch(url, {
+      method: "POST",
+      body: form,
+      headers: { Accept: "text/event-stream" },
+      credentials: "same-origin",
+    });
+    if (!res.ok || !res.body) {
+      const detail = await readErrorDetail(res);
+      throw new Error(`Request failed: ${res.status} (${url}) — ${detail}`);
+    }
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -78,7 +109,7 @@ export function textToLogFile(text: string, filename: string): File {
 
 /** Poll the real recent-events buffer (populated by the webhook ingestion endpoint). */
 export async function fetchRecentEvents(): Promise<LiveEvent[]> {
-  const res = await fetch(`${BASE}/api/events/recent`);
+  const res = await fetch(apiUrl("/api/events/recent"), { credentials: "same-origin" });
   if (!res.ok) throw new Error(`Events request failed: ${res.status}`);
   const data = (await res.json()) as { events?: LiveEvent[] };
   return data.events ?? [];
@@ -93,7 +124,7 @@ export interface TrafficPoint {
 
 /** Fetch aggregated traffic buckets derived from the recent-events buffer. */
 export async function fetchTraffic(): Promise<TrafficPoint[]> {
-  const res = await fetch(`${BASE}/api/metrics/traffic`);
+  const res = await fetch(apiUrl("/api/metrics/traffic"), { credentials: "same-origin" });
   if (!res.ok) throw new Error(`Traffic request failed: ${res.status}`);
   const data = (await res.json()) as { points?: TrafficPoint[] };
   return data.points ?? [];

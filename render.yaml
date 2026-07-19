@@ -53,6 +53,8 @@ services:
         value: INC
       - key: STATIC_DIR
         value: ./static               # where FastAPI serves the built React app
+      - key: CORS_ORIGINS
+        value: "*"                    # same-origin SPA + local Vite; lock down later if needed
 
       # ── Secrets — set these in the Render Dashboard (not here!) ───────
       - key: OPENROUTER_API_KEY
