@@ -1,22 +1,23 @@
 """Webhook endpoints for external system integration.
 
-Any live monitoring system (Datadog, PagerDuty, Grafana, CloudWatch, etc.)
-can POST alerts/incidents to these endpoints and receive analysis results.
+Two ingest paths:
+  POST /webhook/logs   — lightweight; pushes into the live cockpit buffer (no LLM)
+  POST /webhook/ingest — full LangGraph analysis (strict or loose JSON body)
 
-Supported event types:
-- alert: a monitoring alert with metric data
-- incident: a structured incident payload
-- log_batch: raw log lines for analysis
+The UI "copy URL" points at /api/webhook/logs.
 """
+
+from __future__ import annotations
 
 import json
 import uuid
 import logging
 import asyncio
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, Body, Header, HTTPException
+from fastapi import APIRouter, Body, Header, HTTPException, Request
+from pydantic import ValidationError
 
 from app.models import WebhookEvent, WebhookResponse
 from app.graph import graph
@@ -78,6 +79,67 @@ def _extract_logs_from_payload(event: WebhookEvent) -> str:
     return json.dumps(payload, indent=2)
 
 
+def _coerce_webhook_event(body: dict[str, Any]) -> WebhookEvent:
+    """Accept either the strict WebhookEvent shape or a loose monitoring payload."""
+    try:
+        return WebhookEvent.model_validate(body)
+    except ValidationError:
+        pass
+
+    # Loose shape: treat the whole body as the payload.
+    source = str(body.get("source") or body.get("service") or "webhook")
+    event_type = str(body.get("event_type") or "log_batch")
+    if "payload" in body and isinstance(body["payload"], dict):
+        payload = body["payload"]
+    else:
+        payload = body
+    return WebhookEvent(
+        source=source,
+        event_type=event_type,
+        payload=payload,
+        timestamp=body.get("timestamp"),
+        callback_url=body.get("callback_url"),
+    )
+
+
+def _ingest_loose_body(payload: dict[str, Any], default_source: str = "n8n") -> dict[str, Any]:
+    """Shared logic for /logs — push into live_store, no LLM."""
+    source = str(payload.get("source", default_source))
+
+    if "logs" in payload:
+        logs = payload["logs"]
+        text = "\n".join(str(x) for x in logs) if isinstance(logs, list) else str(logs)
+        added = live_store.add_events_from_text(text, source=source)
+        logger.info("[webhook/logs] ingested %d line(s) from source=%s", added, source)
+        return {"status": "ok", "ingested": added, "buffer_size": len(live_store.recent())}
+
+    if "message" in payload:
+        ev = live_store.add_event(
+            message=str(payload["message"]),
+            severity=str(payload.get("severity", "INFO")),
+            service=str(payload.get("service", source)),
+            category=payload.get("category"),
+            source=source,
+            response_time_ms=payload.get("response_time_ms"),
+        )
+        logger.info("[webhook/logs] ingested 1 event id=%s source=%s", ev["id"], source)
+        return {
+            "status": "ok",
+            "ingested": 1,
+            "event_id": ev["id"],
+            "buffer_size": len(live_store.recent()),
+        }
+
+    ev = live_store.add_event(message=json.dumps(payload), source=source)
+    logger.info("[webhook/logs] ingested raw JSON as 1 event id=%s", ev["id"])
+    return {
+        "status": "ok",
+        "ingested": 1,
+        "event_id": ev["id"],
+        "buffer_size": len(live_store.recent()),
+    }
+
+
 async def _run_analysis(logs: str, request_id: str, source: str) -> dict:
     """Run the full analysis graph on extracted logs."""
     initial = {
@@ -113,19 +175,32 @@ async def _send_callback(callback_url: str, result: dict) -> None:
 
 
 @router.post("/ingest", response_model=WebhookResponse)
-async def ingest_webhook(event: WebhookEvent, x_api_key: Optional[str] = Header(None)):
-    """Receive a webhook event and analyze it.
+async def ingest_webhook(
+    request: Request,
+    x_api_key: Optional[str] = Header(None),
+    body: dict[str, Any] = Body(...),
+):
+    """Receive a webhook event and run full LangGraph analysis.
 
-    Accepts payloads from monitoring systems in various formats.
-    If a callback_url is provided, results are POSTed back asynchronously.
+    Accepts the strict WebhookEvent schema OR a loose JSON body
+    ({"message": "..."} / {"logs": [...]} / etc.).
+    Always mirrors extracted lines into the live cockpit buffer first.
     """
     if not _validate_api_key(x_api_key):
         raise HTTPException(status_code=401, detail="Invalid API key")
 
+    event = _coerce_webhook_event(body)
     request_id = str(uuid.uuid4())
     logs = _extract_logs_from_payload(event)
+    logger.info(
+        "[webhook/ingest] source=%s event_type=%s chars=%d client=%s",
+        event.source,
+        event.event_type,
+        len(logs),
+        request.client.host if request.client else "?",
+    )
 
-    # Surface the incoming logs on the live cockpit feed regardless of analysis.
+    # Surface on the live feed regardless of analysis success.
     if logs.strip():
         live_store.add_events_from_text(logs, source=event.source or "webhook")
 
@@ -201,53 +276,43 @@ async def get_result(request_id: str):
 
 
 @router.post("/logs")
-async def ingest_logs(payload: dict = Body(...)):
-    """Lightweight ingestion endpoint for n8n / monitoring sources.
+async def ingest_logs(payload: dict[str, Any] = Body(...)):
+    """Lightweight ingestion for n8n / monitoring — live buffer only (no LLM).
 
-    Pushes events onto the live cockpit feed (no LLM analysis). Accepts:
-      - {"logs": ["line", ...]} or {"logs": "multi\\nline"}  → one event per line
+    Accepts:
+      - {"logs": ["line", ...]} or {"logs": "multi\\nline"}
       - {"message": "...", "severity": "...", "service": "...", "category": "..."}
-      - any other JSON                                        → single stringified event
+      - any other JSON → one stringified event
     """
-    source = str(payload.get("source", "n8n"))
-
-    if "logs" in payload:
-        logs = payload["logs"]
-        text = "\n".join(str(x) for x in logs) if isinstance(logs, list) else str(logs)
-        added = live_store.add_events_from_text(text, source=source)
-        return {"status": "ok", "ingested": added}
-
-    if "message" in payload:
-        ev = live_store.add_event(
-            message=str(payload["message"]),
-            severity=str(payload.get("severity", "INFO")),
-            service=str(payload.get("service", source)),
-            category=payload.get("category"),
-            source=source,
-            response_time_ms=payload.get("response_time_ms"),
-        )
-        return {"status": "ok", "ingested": 1, "event_id": ev["id"]}
-
-    ev = live_store.add_event(message=json.dumps(payload), source=source)
-    return {"status": "ok", "ingested": 1, "event_id": ev["id"]}
+    return _ingest_loose_body(payload, default_source="n8n")
 
 
 @router.post("/test")
 async def test_webhook():
-    """Test endpoint to verify webhook connectivity."""
+    """Connectivity probe + inject a sample event into the live buffer."""
+    sample = {
+        "source": "webhook-test",
+        "message": "NETRA webhook probe — CRITICAL database-service: connection pool exhausted",
+        "severity": "CRITICAL",
+        "service": "database-service",
+        "category": "Database",
+        "response_time_ms": 890,
+    }
+    result = _ingest_loose_body(sample, default_source="webhook-test")
     return {
         "status": "ok",
-        "message": "Webhook endpoint is reachable.",
-        "supported_sources": ["datadog", "pagerduty", "grafana", "cloudwatch", "custom"],
-        "payload_format": {
-            "source": "string (e.g. 'datadog')",
-            "event_type": "string ('alert' | 'incident' | 'log_batch')",
-            "payload": {
-                "logs": "list[string] or string — raw log lines",
-                "alert": "dict — structured alert object",
-                "message": "string — free-form text",
-            },
-            "callback_url": "string (optional) — URL for async result delivery",
+        "message": "Webhook endpoint is reachable. A sample CRITICAL event was pushed to the live buffer.",
+        "ingest": result,
+        "endpoints": {
+            "live_feed": "POST /api/webhook/logs  (no LLM — fills Live Console)",
+            "full_analysis": "POST /api/webhook/ingest  (runs LangGraph pipeline)",
+        },
+        "example_logs_body": {
+            "source": "n8n",
+            "message": "ERROR auth-service: JWT verification flood",
+            "severity": "ERROR",
+            "service": "auth-service",
+            "category": "Auth",
         },
     }
 

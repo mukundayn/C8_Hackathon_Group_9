@@ -49,3 +49,12 @@ def test_ring_buffer_caps_at_max():
     for i in range(250):
         live_store.add_event(message=f"line {i}")
     assert len(live_store.recent(1000)) <= 200
+
+
+def test_recent_returns_newest_first():
+    live_store.add_event(message="first")
+    live_store.add_event(message="second")
+    live_store.add_event(message="third")
+    msgs = [e["message"] for e in live_store.recent()]
+    assert msgs[0] == "third"
+    assert msgs[-1] == "first"

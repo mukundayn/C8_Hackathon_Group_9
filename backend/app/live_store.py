@@ -122,9 +122,11 @@ def add_events_from_text(text: str, source: str = "webhook") -> int:
 
 
 def recent(limit: int = _MAX_EVENTS) -> list[dict[str, Any]]:
+    """Return newest-first events (UI prepends fresh rows at the top)."""
     with _lock:
         items = list(_events)
-    return items[-limit:]
+    # deque is oldest→newest; reverse so clients see latest first.
+    return list(reversed(items[-limit:]))
 
 
 def clear() -> None:
