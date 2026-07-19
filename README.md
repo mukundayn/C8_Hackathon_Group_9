@@ -2,7 +2,7 @@
 
 **Hackathon product:** a real-time DevOps incident analysis suite.
 
-Upload (or stream) application logs → a **5-agent LangGraph pipeline** classifies root causes, retrieves **RAG-grounded runbooks** from Chroma, proposes remediations, builds an incident cookbook, files **expertise-routed Jira tickets**, and posts a **Slack** summary — all streamed live over SSE into a cyber-HUD operator cockpit.
+Upload logs or screenshots (or stream lines via webhook) → a **LangGraph pipeline** classifies root causes, retrieves **RAG-grounded runbooks** from Chroma, proposes remediations, learns on KB miss, builds an incident cookbook, and — after **HITL** on newly learned criticals — files **expertise-routed Jira** tickets and posts **Slack**. Progress streams over SSE into the operator cockpit.
 
 | Layer | Stack |
 |-------|--------|
@@ -11,19 +11,20 @@ Upload (or stream) application logs → a **5-agent LangGraph pipeline** classif
 | Deploy | Single Render web service (`render.yaml`) — API + SPA from one origin |
 | Repo | https://github.com/mukundayn/C8_Hackathon_Group_9 |
 
-**Product pitch deck (interactive HTML):** open [`docs/presentation.html`](docs/presentation.html) in a browser (arrow keys / click to navigate).
+**Product pitch deck:** open [`docs/presentation.html`](docs/presentation.html) (arrow keys / click).
 
 ---
 
 ## Features
 
-- **Clerk Google SSO** — real OAuth (not a mock login); expertise preference drives Jira routing
-- **Multipart log upload** + built-in incident templates
-- **SSE streaming** of real LangGraph node events (`classifier → remediation → cookbook → jira → notifier`)
-- **Structured results** — issues, RAG remediations, cookbook checklist
-- **Live telemetry** — webhook ingest (`/api/webhook/logs`), live console, traffic chart
-- **Expertise-based Jira routing** — assign to you or specialist queue
-- **Slack notifier** — mock client with real message preview (swap for Slack SDK later)
+- **Clerk Google SSO** + per-operator **OpenRouter BYOK** (analyze bills the operator’s key)
+- **Log upload** (`.log` / `.txt` / `.json`) and **screenshot upload** (`.png` / `.jpg` / …) → optional `image_analyzer`
+- **SSE streaming** of LangGraph nodes into the live flowchart
+- **Hybrid RAG** — Chroma runbooks, confidence rewrite, KB HIT vs MISS→LEARN
+- **HITL** before Jira/Slack on newly learned critical/high issues
+- **Jira + Slack** — real clients when `JIRA_*` / `SLACK_*` are set; otherwise MOCK (badge in UI)
+- **Live feed** — `POST /api/webhook/logs` fills Live Console / traffic / threat cards (**no LLM**); full triage = upload `/api/analyze` or `/api/webhook/ingest`
+- **Hybrid threat scores** — fast signal score on ingest; LLM refine for critical/high during analyze
 - **CI** — GitHub Actions: pytest + typecheck + vitest + frontend build
 
 ---
@@ -33,7 +34,7 @@ Upload (or stream) application logs → a **5-agent LangGraph pipeline** classif
 ```text
 ├── frontend/                 # Netra cockpit (Vite)
 │   ├── src/
-│   │   ├── auth/             # Clerk login (Netra-styled)
+│   │   ├── auth/             # Clerk login + BYOK
 │   │   ├── components/       # hud, flow, logs, charts, results, integrations
 │   │   ├── hooks/            # useAnalysis, useLiveEvents, useTraffic, useOperator
 │   │   ├── lib/              # api.ts, sse.ts, mappers.ts (+ tests)
@@ -41,17 +42,17 @@ Upload (or stream) application logs → a **5-agent LangGraph pipeline** classif
 │   └── package.json
 ├── backend/                  # FastAPI + LangGraph
 │   ├── app/
-│   │   ├── main.py           # /analyze, /events/recent, /metrics/traffic, webhooks
+│   │   ├── main.py           # /analyze, metrics, HITL, webhooks
 │   │   ├── graph.py          # agent orchestration
-│   │   ├── live_store.py     # telemetry ring buffer + expertise map
-│   │   ├── webhook.py        # external ingest
-│   │   ├── nodes/            # classifier, remediation, cookbook, jira, notifier, …
-│   │   ├── knowledge/        # Chroma RAG, hybrid search, confidence rewrite
-│   │   └── evals/            # golden-set quality gate
+│   │   ├── live_store.py     # telemetry ring buffer + threat scores
+│   │   ├── threat_score.py   # heuristic + LLM refine
+│   │   ├── webhook.py        # live feed + full ingest
+│   │   ├── nodes/            # classifier, image_analyzer, remediation, …
+│   │   ├── knowledge/        # Chroma RAG (seeded runbooks)
+│   │   └── evals/            # golden-set helpers
 │   ├── requirements.txt
-│   ├── requirements-dev.txt
 │   └── tests/
-├── docs/presentation.html    # Interactive product presentation
+├── docs/presentation.html
 ├── .github/workflows/ci.yml
 ├── render.yaml
 ├── build.sh / dev.sh
@@ -65,8 +66,8 @@ Upload (or stream) application logs → a **5-agent LangGraph pipeline** classif
 ### Prerequisites
 - Node.js 20+
 - Python 3.11–3.13 recommended
-- Clerk app (Google OAuth enabled) → publishable + secret keys
-- OpenRouter API key
+- Clerk app (Google OAuth) → publishable key (frontend) + secret (optional backend)
+- Your own OpenRouter key for cockpit analyze (BYOK on login)
 
 ### 1. Backend
 
@@ -77,8 +78,7 @@ python -m venv .venv
 # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Edit .env → set OPENROUTER_API_KEY and CLERK_SECRET_KEY
-# Optional locally / required on Render free tier: HF_TOKEN
+# Optional: OPENROUTER_API_KEY (host), CLERK_SECRET_KEY, HF_TOKEN, JIRA_*, SLACK_*
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -88,11 +88,11 @@ uvicorn app.main:app --reload --port 8000
 cd frontend
 npm install
 cp .env.example .env
-# Edit .env → set CLERK_PUBLISHABLE_KEY
+# Set CLERK_PUBLISHABLE_KEY
 npm run dev
 ```
 
-Open **http://localhost:5173** → Google sign-in → upload a log or pick a template.
+Open **http://localhost:5173** → Google sign-in → paste OpenRouter `sk-or-…` → upload a log or screenshot from `samples/`.
 
 Or start both with `./dev.sh` (Unix; needs a repo-root or `backend/.venv`).
 
@@ -105,20 +105,20 @@ Or start both with `./dev.sh` (Unix; needs a repo-root or `backend/.venv`).
 | Variable | Required | Notes |
 |----------|----------|--------|
 | `CLERK_PUBLISHABLE_KEY` | Yes | Injected at **build time** via Vite `define` |
-| `VITE_API_BASE_URL` | No | Leave empty — same-origin in prod; Vite proxies `/api` in dev |
+| `VITE_API_BASE_URL` | No | Empty = same-origin in prod; Vite proxies `/api` in dev |
 
 ### Backend (`backend/.env`)
 
 | Variable | Required | Notes |
 |----------|----------|--------|
-| `OPENROUTER_API_KEY` | Yes | LLM calls (asserted at import) |
-| `CLERK_SECRET_KEY` | Recommended | Server-side session verification |
-| `HF_TOKEN` | **Yes on Render free** | Uses HF Inference API for embeddings → stays under 512MB RAM |
+| `OPENROUTER_API_KEY` | Optional | Host fallback; **cockpit `/analyze` requires operator BYOK** |
+| `CLERK_SECRET_KEY` | Optional | Not used to gate API routes today (SPA auth only) |
+| `HF_TOKEN` | **Yes on Render free** | HF Inference API embeddings under 512MB RAM |
+| `JIRA_*` / `SLACK_*` | Optional | When set → LIVE integrations; else MOCK |
 | `LLM_MODEL` | No | Default `openai/gpt-4o-mini` |
 | `CHROMA_DIR` | No | Default `./chroma_db` |
-| `SLACK_CHANNEL` / `JIRA_PROJECT_KEY` | No | Mock integration labels |
 
-Never commit real `.env` files (gitignored). Only `.env.example` is tracked.
+Never commit real `.env` files (gitignored).
 
 ---
 
@@ -126,13 +126,16 @@ Never commit real `.env` files (gitignored). Only `.env.example` is tracked.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/health` | Health check |
-| `POST` | `/api/analyze` | Multipart file + optional `expertise` → SSE (`node`, `done`) |
+| `GET` | `/api/ping` | Connectivity |
+| `POST` | `/api/analyze` | Log/image analyze → SSE (`node`, `done`); requires BYOK |
 | `GET` | `/api/events/recent` | Live telemetry buffer |
 | `GET` | `/api/metrics/traffic` | Traffic chart buckets |
-| `POST` | `/api/webhook/logs` | Live-feed ingest (buffer only, no LLM) |
-| `POST` | `/api/webhook/ingest` | Full webhook + LangGraph analysis |
-| `POST` | `/api/webhook/test` | Connectivity probe → sample live event |
+| `GET` | `/api/metrics/hud` | Gauge rollups |
+| `POST` | `/api/webhook/logs` | **Live feed only** (`mode=live_feed`, `runs_llm=false`) |
+| `POST` | `/api/webhook/ingest` | Full LangGraph analysis via webhook |
+| `POST` | `/api/webhook/test` | Probe → sample live event |
+| `POST` | `/api/hitl/approve` | Approve newly learned → Jira + Slack |
+| `GET` | `/api/integrations/status` | `real` / `mock` for Jira & Slack |
 
 Dev: Vite proxies `/api/*` → `http://localhost:8000/*` (strips `/api`).
 
@@ -142,13 +145,13 @@ Dev: Vite proxies `/api/*` → `http://localhost:8000/*` (strips `/api`).
 
 ```text
 START
-  → classifier          # parse / cluster / LLM issues
-  → [image_analyzer]    # optional if image payload
-  → remediation         # RAG + confidence rewrite
-  → [fallback]          # unknown issues → HF learn path
-  → cookbook            # checklist
-  → jira                # critical/high + expertise routing
-  → notifier            # Slack preview
+  → classifier              # parse / cluster / LLM issues + threat scores
+  → [image_analyzer]        # if screenshot / image_data present
+  → remediation             # RAG + confidence rewrite
+  → [fallback]              # KB MISS → learn into Chroma
+  → cookbook                # checklist
+  → [jira]                  # critical/high; HITL may defer newly learned
+  → notifier                # Slack (LIVE or MOCK)
 END
 ```
 
@@ -157,54 +160,33 @@ END
 ## Testing
 
 ```bash
-# Backend deterministic units
-cd backend
-pip install -r requirements-dev.txt
-pytest
-
-# Frontend
-cd frontend
-npm run typecheck
-npm test
-npm run build
+cd backend && pip install -r requirements-dev.txt && pytest
+cd frontend && npm run typecheck && npm test && npm run build
 ```
-
-| Layer | Tool | Coverage |
-|-------|------|----------|
-| Backend | pytest | live store, Jira routing, models, endpoint smoke |
-| Frontend | vitest | SSE parser, node→stage mappers |
-| Evals | `backend/app/evals` | golden-set accuracy (demo quality gate) |
-| CI | `.github/workflows/ci.yml` | pytest + typecheck + vitest + build |
 
 ---
 
 ## Deploy on Render
 
-1. Connect GitHub repo `mukundayn/C8_Hackathon_Group_9` → **Blueprint** (`render.yaml`) or Web Service.
-2. Set secrets: `OPENROUTER_API_KEY`, `CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `HF_TOKEN`.
-3. Build: `npm install && npm run build` in `frontend/` → copy `dist` → `backend/static` → `pip install -r requirements.txt`.
-4. Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
-5. In **Clerk Dashboard**:
-   - Allowed origin = your Render URL
-   - Google OAuth redirect = `https://<render-host>/login/sso-callback`
+1. Connect `mukundayn/C8_Hackathon_Group_9` → Blueprint (`render.yaml`) or Web Service.
+2. Set secrets: `CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `HF_TOKEN`; optional host `OPENROUTER_API_KEY`, `JIRA_*`, `SLACK_*`.
+3. Build copies frontend `dist` → `backend/static`; start uvicorn on `$PORT`.
+4. Clerk: allowed origin + Google redirect `https://<render-host>/login/sso-callback`.
 
-**Free tier notes**
-- Cold start re-seeds Chroma from code (`seed_if_empty`).
-- Set `HF_TOKEN` so embeddings use the Inference API (avoid loading full local torch models into 512MB).
-- Service sleeps after ~15 min idle; first request wakes it.
+**Free tier:** cold start re-seeds Chroma; set `HF_TOKEN`; service sleeps after ~15 min idle.
 
 ---
 
 ## Demo script (judges)
 
-1. Sign in with Google → pick expertise (e.g. DB + Memory).
-2. Load template **“DB Connection Pool Exhaustion”**.
-3. Watch the 5-agent flow chart stream to 100%.
-4. Show issues / remediations / cookbook in the results panel.
-5. Point at Jira board (assigned vs routed) and Slack preview.
-6. `POST` a sample to `/api/webhook/logs` → live console + traffic chart update.
+1. Sign in with Google → paste OpenRouter BYOK → pick expertise.
+2. Upload a sample from `samples/` (e.g. DB / auth log) — or a ops screenshot (PNG).
+3. Watch the flowchart (classifier → … → notifier); note optional image / learn branches.
+4. Show Results: issues, remediations, KB HIT vs LEARN, cookbook.
+5. If HITL cards appear → Approve → LIVE/MOCK Jira + Slack boards.
+6. `POST /api/webhook/logs` (or n8n) → Live Console + traffic update (**telemetry only**, not full analyze).
 
-Open **`docs/presentation.html`** for a full interactive walkthrough of the product story.
+Pitch deck: **`docs/presentation.html`**.
 
 ---
 

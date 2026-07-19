@@ -367,8 +367,9 @@
       <p class="eyebrow">C8 Hackathon · Group 9</p>
       <h1><span class="grad">NETRA.AI</span></h1>
       <p class="lede">
-        Cognitive observability for incident response — five LangGraph agents,
-        RAG-grounded remediations, and a live operator cockpit. Real backend. Real OAuth. Real stream.
+        Cognitive observability for incident response — LangGraph agents, RAG-grounded
+        remediations, HITL before ticketing, and a live operator cockpit.
+        Real backend. Real OAuth. Real SSE stream. Bring-your-own OpenRouter key.
       </p>
       <div class="cta-row">
         <button class="cta" type="button" data-go="1">Enter the pitch →</button>
@@ -400,27 +401,27 @@
     <!-- 3 -->
     <section class="slide" data-title="03 / 08">
       <p class="eyebrow">The product</p>
-      <h2>One cockpit. Five agents. Live truth.</h2>
+      <h2>One cockpit. Real graph. Live truth.</h2>
       <div class="grid-2">
         <div class="tile hot">
           <div class="k">Ingest</div>
-          <h3>Upload or webhook</h3>
-          <p>Drop a .log / template, or POST from n8n / Datadog into the live feed.</p>
+          <h3>Upload or live feed</h3>
+          <p>Drop a .log / screenshot, or POST from n8n into the live feed (telemetry only — no LLM).</p>
         </div>
         <div class="tile hot">
           <div class="k">Analyze</div>
           <h3>SSE LangGraph stream</h3>
-          <p>Watch each agent complete in the flow chart as the graph runs for real.</p>
+          <p>Classifier → optional vision → RAG remediate → learn on miss → cookbook → HITL → Jira/Slack.</p>
         </div>
         <div class="tile hot">
           <div class="k">Resolve</div>
           <h3>RAG remediations</h3>
-          <p>Chroma runbooks + hybrid search + confidence rewrite → grounded fixes.</p>
+          <p>Seeded Chroma runbooks + hybrid search + confidence rewrite → grounded fixes.</p>
         </div>
         <div class="tile hot">
           <div class="k">Act</div>
-          <h3>Jira + Slack</h3>
-          <p>Expertise-routed tickets and a Slack summary preview for the channel.</p>
+          <h3>HITL → Jira + Slack</h3>
+          <p>Newly learned criticals need approve. LIVE clients when env is set; else MOCK with a clear badge.</p>
         </div>
       </div>
     </section>
@@ -466,7 +467,7 @@
     <section class="slide" data-title="05 / 08">
       <p class="eyebrow">Live demo simulation</p>
       <h2>Press play — watch the stream.</h2>
-      <p class="lede">Illustrates the UI’s event-driven progress (same stages as production SSE).</p>
+      <p class="lede">Illustrates main-path SSE progress. Production also branches image_analyzer and fallback/learn when needed.</p>
       <div class="cta-row">
         <button class="cta" type="button" id="playFlow">▶ Run analysis sim</button>
         <button class="cta ghost" type="button" id="resetFlow">Reset</button>
@@ -488,17 +489,17 @@
         <div class="tile">
           <div class="k">Frontend</div>
           <h3>React 19 + Vite + Tailwind</h3>
-          <p>Clerk SSO · SSE client · Netra HUD · Recharts traffic · Live console</p>
+          <p>Clerk SSO · BYOK · SSE · HUD · Recharts · Live console · threat alerts</p>
         </div>
         <div class="tile">
           <div class="k">Backend</div>
           <h3>FastAPI + LangGraph</h3>
-          <p>Chroma RAG · OpenRouter LLM · webhooks · expertise routing · mock Jira/Slack</p>
+          <p>Chroma RAG · OpenRouter · live-feed webhooks · HITL · LIVE or MOCK Jira/Slack</p>
         </div>
         <div class="tile">
           <div class="k">Quality</div>
-          <h3>CI + evals</h3>
-          <p>pytest · vitest · golden-set evals · GitHub Actions on every push</p>
+          <h3>CI + tests</h3>
+          <p>pytest · vitest · typecheck · GitHub Actions on every push</p>
         </div>
         <div class="tile">
           <div class="k">Host</div>
@@ -520,18 +521,18 @@
         </div>
         <div class="tile">
           <div class="k">02</div>
-          <h3>RAG with confidence</h3>
-          <p>Hybrid retrieval + rerank + query rewrite when scores are low.</p>
+          <h3>RAG + learn loop</h3>
+          <p>Hybrid retrieval, confidence rewrite, and KB MISS → learn into Chroma.</p>
         </div>
         <div class="tile">
           <div class="k">03</div>
-          <h3>Intent-aware ticketing</h3>
-          <p>Category → expertise map assigns to the operator or routes out.</p>
+          <h3>HITL before blast radius</h3>
+          <p>Newly learned criticals need operator approve before Jira/Slack fire.</p>
         </div>
         <div class="tile">
           <div class="k">04</div>
-          <h3>Hackathon-ready ops</h3>
-          <p>CI green, README, env examples, Render blueprint, presentation deck.</p>
+          <h3>Honest dual paths</h3>
+          <p>Live webhook = telemetry; upload/analyze = full AI. BYOK. LIVE badges when integrated.</p>
         </div>
       </div>
     </section>
@@ -542,14 +543,14 @@
       <h2>Ship the cockpit.</h2>
       <p class="lede">
         Netra turns log chaos into a guided incident response loop —
-        classify, ground, checklist, ticket, notify.
+        classify, ground, learn, checklist, HITL, ticket, notify.
       </p>
       <div class="cta-row">
         <a class="cta" href="https://github.com/mukundayn/C8_Hackathon_Group_9" target="_blank" rel="noreferrer">GitHub repo</a>
         <button class="cta ghost" type="button" data-go="0">↻ Restart deck</button>
       </div>
       <p class="lede mono" style="margin-top:2rem;font-size:0.8rem;color:#64748b;">
-        Stack: React · FastAPI · LangGraph · Chroma · Clerk · Render
+        Stack: React · FastAPI · LangGraph · Chroma · Clerk · OpenRouter BYOK · Render
       </p>
     </section>
   </div>
@@ -602,11 +603,11 @@
 
     // Pipeline detail
     const details = [
-      ["Classifier", "Parses raw logs, clusters error signatures, and uses the LLM to emit structured issues with severity and evidence."],
-      ["Remediator", "Builds an incident-aware query, retrieves runbooks (hybrid + rerank), rewrites on low confidence, and proposes grounded commands."],
+      ["Classifier", "Parses raw logs, clusters error signatures, emits structured issues, and stamps hybrid threat scores (LLM refine on critical/high)."],
+      ["Remediator", "Retrieves seeded Chroma runbooks (hybrid + rerank), rewrites on low confidence, and proposes grounded commands. Optional image_analyzer and fallback/learn sit on branches."],
       ["Cookbook", "Turns remediations into an ordered incident checklist with owners and done-when criteria."],
-      ["Jira", "Creates tickets for critical/high issues and routes by expertise — assigned to you or a specialist queue."],
-      ["Notifier", "Posts a Slack-ready summary of the incident for the on-call channel (mock client in demo)."],
+      ["Jira", "Critical/high path with expertise routing. Newly learned items wait for HITL approve. LIVE when JIRA_* env is set."],
+      ["Notifier", "Posts a Slack summary for the on-call channel. LIVE when SLACK_* env is set; otherwise MOCK with an explicit badge."],
     ];
     const stageDetail = document.getElementById("stageDetail");
     document.querySelectorAll("#pipeline .stage").forEach((btn) => {
