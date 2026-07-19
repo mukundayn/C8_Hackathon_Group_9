@@ -4,7 +4,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -12,6 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.graph import graph
 from app.knowledge.runbook_store import seed_if_empty
+from app import webhook, live_store
 
 # Directory where the built React app lives (set via STATIC_DIR env var).
 # In production (Render) this is ./static (populated by build.sh).
@@ -27,7 +28,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Incident Analysis Suite", lifespan=lifespan)
+app = FastAPI(title="Netra.ai — Incident Analysis Suite", lifespan=lifespan)
 
 # CORS_ORIGINS env var: comma-separated list of allowed origins.
 # In production set it to your deployed frontend URL (or "*" for open access).
@@ -67,12 +68,28 @@ def _merge_update(final: dict, update: dict) -> None:
             final[key] = value
 
 
-@app.post("/analyze")
-async def analyze(file: UploadFile = File(...)):
+def _parse_expertise(raw: str) -> list[str]:
+    return [e.strip() for e in (raw or "").split(",") if e.strip()]
+
+
+# ── API routes ────────────────────────────────────────────────────────────────
+# Registered on a router so they can be exposed under BOTH "" and "/api":
+#   - dev:  the Vite proxy strips /api → hits the bare route
+#   - prod: FastAPI serves the SPA + /api/* on the same origin
+api = APIRouter()
+
+
+@api.post("/analyze")
+async def analyze(file: UploadFile = File(...), expertise: str = Form("")):
     raw = (await file.read()).decode("utf-8", errors="replace")
     thread_id = str(uuid.uuid4())
     run_config = {"configurable": {"thread_id": thread_id}}
-    initial = {"raw_logs": raw, "filename": file.filename, "trace": []}
+    initial = {
+        "raw_logs": raw,
+        "filename": file.filename,
+        "operator_expertise": _parse_expertise(expertise),
+        "trace": [],
+    }
 
     async def event_stream():
         # Accumulate from streamed updates so the done event does not depend on
@@ -88,6 +105,25 @@ async def analyze(file: UploadFile = File(...)):
         yield {"event": "done", "data": json.dumps(_jsonable(final))}
 
     return EventSourceResponse(event_stream())
+
+
+@api.get("/events/recent")
+def events_recent(limit: int = 120):
+    """Live telemetry buffer, populated by external systems via the webhook."""
+    return {"events": live_store.recent(limit)}
+
+
+@api.get("/metrics/traffic")
+def metrics_traffic():
+    """Per-minute traffic buckets derived from the live telemetry buffer."""
+    return {"points": live_store.traffic_points()}
+
+
+# Webhook ingestion (/webhook/ingest, /webhook/logs, …) lives under the same prefixes.
+api.include_router(webhook.router)
+
+app.include_router(api)              # bare paths (dev proxy target)
+app.include_router(api, prefix="/api")  # same-origin API for production
 
 
 # ── Static file serving (production only) ────────────────────────────────────

@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # Dummy key so app.config's import-time assert passes; no real calls are made.
+      OPENROUTER_API_KEY: test-key-not-used
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install lightweight test deps
+        # The deterministic unit tests only need pydantic + dotenv + pytest.
+        # Heavy pipeline deps (langgraph, chromadb, torch) are optional here;
+        # endpoint tests importorskip / skip gracefully without them.
+        run: pip install pydantic python-dotenv "fastapi>=0.115" -r requirements-dev.txt
+      - name: Run pytest
+        run: pytest
+
+  frontend:
+    name: Frontend (build + typecheck + vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      CLERK_PUBLISHABLE_KEY: pk_test_ci_placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install deps
+        run: npm install
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Build
+        run: npm run build

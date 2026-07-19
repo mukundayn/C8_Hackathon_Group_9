@@ -10,7 +10,7 @@ BACKEND="$ROOT/backend"
 
 echo "▶ Installing frontend dependencies…"
 cd "$FRONTEND"
-npm ci
+npm install
 
 echo "▶ Building React app…"
 npm run build

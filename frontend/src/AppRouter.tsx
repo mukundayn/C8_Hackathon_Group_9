@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/react";
-import App from "./App.tsx";
-import LoginPage from "./components/LoginPage.tsx";
+import Dashboard from "./components/hud/Dashboard.tsx";
+import LoginPage from "./auth/LoginPage.tsx";
 
 function usePathname(): string {
   const [pathname, setPathname] = useState(window.location.pathname);
@@ -30,7 +30,9 @@ export default function AppRouter() {
       window.location.replace(isSignedIn ? "/analyze" : "/login");
     }
   }, [isLoaded, isLoginRoute, isSignedIn]);
+
   if (!isLoaded) return <RouteLoading />;
-  if (isLoginRoute) return isSignedIn ? <RouteLoading /> : <LoginPage isCallback={pathname === "/login/sso-callback"} />;
-  return isSignedIn ? <App /> : <RouteLoading />;
+  if (isLoginRoute)
+    return isSignedIn ? <RouteLoading /> : <LoginPage isCallback={pathname === "/login/sso-callback"} />;
+  return isSignedIn ? <Dashboard /> : <RouteLoading />;
 }

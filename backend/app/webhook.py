@@ -16,10 +16,11 @@ import asyncio
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Body, Header, HTTPException
 
 from app.models import WebhookEvent, WebhookResponse
 from app.graph import graph
+from app import live_store
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,10 @@ async def ingest_webhook(event: WebhookEvent, x_api_key: Optional[str] = Header(
     request_id = str(uuid.uuid4())
     logs = _extract_logs_from_payload(event)
 
+    # Surface the incoming logs on the live cockpit feed regardless of analysis.
+    if logs.strip():
+        live_store.add_events_from_text(logs, source=event.source or "webhook")
+
     if not logs.strip():
         return WebhookResponse(
             request_id=request_id,
@@ -193,6 +198,38 @@ async def get_result(request_id: str):
         "status": "pending",
         "message": "Analysis still in progress or request ID not found.",
     }
+
+
+@router.post("/logs")
+async def ingest_logs(payload: dict = Body(...)):
+    """Lightweight ingestion endpoint for n8n / monitoring sources.
+
+    Pushes events onto the live cockpit feed (no LLM analysis). Accepts:
+      - {"logs": ["line", ...]} or {"logs": "multi\\nline"}  → one event per line
+      - {"message": "...", "severity": "...", "service": "...", "category": "..."}
+      - any other JSON                                        → single stringified event
+    """
+    source = str(payload.get("source", "n8n"))
+
+    if "logs" in payload:
+        logs = payload["logs"]
+        text = "\n".join(str(x) for x in logs) if isinstance(logs, list) else str(logs)
+        added = live_store.add_events_from_text(text, source=source)
+        return {"status": "ok", "ingested": added}
+
+    if "message" in payload:
+        ev = live_store.add_event(
+            message=str(payload["message"]),
+            severity=str(payload.get("severity", "INFO")),
+            service=str(payload.get("service", source)),
+            category=payload.get("category"),
+            source=source,
+            response_time_ms=payload.get("response_time_ms"),
+        )
+        return {"status": "ok", "ingested": 1, "event_id": ev["id"]}
+
+    ev = live_store.add_event(message=json.dumps(payload), source=source)
+    return {"status": "ok", "ingested": 1, "event_id": ev["id"]}
 
 
 @router.post("/test")

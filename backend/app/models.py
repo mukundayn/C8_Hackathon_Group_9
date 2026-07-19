@@ -101,6 +101,9 @@ class Cookbook(BaseModel):
     items: list[ChecklistItem]
 
 
+Expertise = Literal["DB", "Network", "Memory", "CPU", "General"]
+
+
 # ---- integration results ----
 class JiraTicket(BaseModel):
     key: str
@@ -108,6 +111,11 @@ class JiraTicket(BaseModel):
     summary: str
     severity: Severity
     issue_id: str
+    # Expertise-based intent routing (set by the jira node).
+    required_expertise: Expertise = "General"
+    routing_status: Literal["assigned", "routed"] = "routed"
+    assignee: Optional[str] = None
+    routing_explanation: Optional[str] = None
 
 
 class SlackResult(BaseModel):

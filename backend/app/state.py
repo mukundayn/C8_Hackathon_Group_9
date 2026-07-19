@@ -13,6 +13,7 @@ class IncidentState(TypedDict, total=False):
     # inputs
     raw_logs: str
     filename: str
+    operator_expertise: list[str]   # e.g. ["DB", "Memory"] — drives Jira routing
 
     # image input (optional)
     image_data: str             # base64-encoded image
