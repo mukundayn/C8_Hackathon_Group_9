@@ -40,10 +40,18 @@ def _sigmoid(x: float) -> float:
 
 
 def score_docs(scored: list[tuple[Document, float]]) -> dict[str, float]:
-    """Normalize cross-encoder logits to 0-1 confidence metrics."""
+    """Normalize retrieval scores to 0–1 confidence metrics.
+
+    Cross-encoder logits (wide range) → sigmoid.
+    Chroma relevance / cosine-like scores already in ~[0, 1] → clamp.
+    """
     if not scored:
         return {"top": 0.0, "mean": 0.0, "count": 0.0}
-    norms = [_sigmoid(s) for _, s in scored]
+    raw = [float(s) for _, s in scored]
+    if max(abs(x) for x in raw) <= 1.5 and min(raw) >= -0.05:
+        norms = [max(0.0, min(1.0, x)) for x in raw]
+    else:
+        norms = [_sigmoid(x) for x in raw]
     return {
         "top": round(max(norms), 4),
         "mean": round(sum(norms) / len(norms), 4),
@@ -77,20 +85,28 @@ def retrieve_with_confidence(
     issue: dict[str, Any],
     k: int | None = None,
     filters: Optional[dict[str, str]] = None,
+    *,
+    use_hybrid: bool | None = None,
+    use_rerank: bool | None = None,
 ) -> tuple[list[Document], dict[str, Any]]:
     """Retrieve; if confidence is low, rewrite query and retrieve once more.
 
     Returns (documents, meta) where meta includes scores and whether rewrite ran.
+
+    Remediator typically passes ``use_rerank=False`` (avoid LLM-rerank storms) while
+    still enabling rewrite via real vector relevance scores.
     """
     top_k = k or config.RAG_TOP_K
     threshold = config.RAG_CONFIDENCE_THRESHOLD
+    hybrid = config.RAG_USE_HYBRID if use_hybrid is None else use_hybrid
+    rerank = config.RAG_USE_RERANK if use_rerank is None else use_rerank
 
     scored = retrieve_with_scores(
         query,
         k=top_k,
         filters=filters,
-        use_hybrid=config.RAG_USE_HYBRID,
-        use_rerank=config.RAG_USE_RERANK,
+        use_hybrid=hybrid,
+        use_rerank=rerank,
     )
     metrics = score_docs(scored)
     meta: dict[str, Any] = {
@@ -99,20 +115,19 @@ def retrieve_with_confidence(
         "threshold": threshold,
         "rewritten": False,
         "final_query": query[:240],
+        "hybrid": hybrid,
+        "rerank": rerank,
     }
 
-    if (
-        config.RAG_CONFIDENCE_REWRITE
-        and metrics["top"] < threshold
-    ):
+    if config.RAG_CONFIDENCE_REWRITE and metrics["top"] < threshold:
         new_query = rewrite_query(issue, query)
         if new_query.strip() and new_query.strip() != query.strip():
             scored2 = retrieve_with_scores(
                 new_query,
                 k=top_k,
                 filters=filters,
-                use_hybrid=config.RAG_USE_HYBRID,
-                use_rerank=config.RAG_USE_RERANK,
+                use_hybrid=hybrid,
+                use_rerank=rerank,
             )
             metrics2 = score_docs(scored2)
             meta["rewritten"] = True

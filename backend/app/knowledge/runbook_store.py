@@ -145,7 +145,31 @@ def retrieve_with_scores(
         except Exception as e:
             logger.warning("Rerank failed; returning vector order: %s", e)
 
-    # Synthetic descending scores when rerank is off / unavailable.
+    # Real relevance scores (0–1) so confidence rewrite can gate — not fake 1/i ranks.
+    try:
+        if where:
+            with_scores = store.similarity_search_with_relevance_scores(
+                query, k=max(top_k, len(docs) or top_k), filter=where
+            )
+        else:
+            with_scores = store.similarity_search_with_relevance_scores(
+                query, k=max(top_k, len(docs) or top_k)
+            )
+        if with_scores:
+            score_by_prefix = {d.page_content[:240]: float(s) for d, s in with_scores}
+            ordered = docs[:top_k] if docs else [d for d, _ in with_scores[:top_k]]
+            out: list[tuple[Document, float]] = []
+            for i, d in enumerate(ordered):
+                s = score_by_prefix.get(d.page_content[:240])
+                if s is None:
+                    s = float(with_scores[i][1]) if i < len(with_scores) else 0.0
+                out.append((d, s))
+            if out:
+                return out
+    except Exception as e:
+        logger.warning("Relevance scores unavailable; using rank fallback: %s", e)
+
+    # Last resort: descending synthetic ranks (confidence rewrite may not trigger).
     return [(doc, 1.0 / (i + 1)) for i, doc in enumerate(docs[:top_k])]
 
 

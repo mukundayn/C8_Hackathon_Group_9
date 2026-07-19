@@ -83,9 +83,21 @@ def _parse_expertise(raw: str) -> list[str]:
     return [e.strip() for e in (raw or "").split(",") if e.strip()]
 
 
+_BULKY_STATE_KEYS = frozenset(
+    {"raw_logs", "image_data", "image_mime", "image_description"}
+)
+
+
 def _done_payload(final: dict) -> dict:
-    """Build a JSON-safe `done` payload; drop bulky raw inputs from the wire."""
-    slim = {k: v for k, v in final.items() if k not in ("raw_logs",)}
+    """Build a JSON-safe `done` payload; drop bulky raw inputs from the wire.
+
+    Critical: never echo ``image_data`` (base64) in SSE — it OOMs/proxy-kills
+    the stream on Render free tier and freezes the browser.
+    """
+    slim = {k: v for k, v in final.items() if k not in _BULKY_STATE_KEYS}
+    # Keep a tiny flag so the UI knows vision ran without shipping pixels.
+    if final.get("image_data") or final.get("image_analysis"):
+        slim["had_image"] = True
     try:
         return _jsonable(slim)
     except Exception:
@@ -98,6 +110,8 @@ def _done_payload(final: dict) -> dict:
             "hitl_pending": _jsonable(final.get("hitl_pending") or []),
             "trace": _jsonable(final.get("trace") or []),
             "fallback_results": _jsonable(final.get("fallback_results")),
+            "image_analysis": _jsonable(final.get("image_analysis")),
+            "had_image": bool(final.get("image_data") or final.get("image_analysis")),
         }
 
 
@@ -221,7 +235,10 @@ async def analyze(request: Request):
 
     print(
         f"[analyze] POST from {request.client.host if request.client else '?'} "
-        f"filename={filename!r} chars={len(raw)} ct={content_type[:40]!r} byok=1"
+        f"filename={filename!r} chars={len(raw)} "
+        f"image_b64={len(image_data) if image_data else 0} "
+        f"ct={content_type[:40]!r} byok=1",
+        flush=True,
     )
 
     thread_id = str(uuid.uuid4())
@@ -288,7 +305,7 @@ async def analyze(request: Request):
                                     node="remediation",
                                     message=(
                                         f"ENTERING remediation (blocking) · top {min(n_issues, 2)}/{n_issues} issue(s) → "
-                                        "fast RAG (no LLM-rerank/rewrite) + 1 structured LLM (≤90s). "
+                                        "hybrid RAG + confidence rewrite (if low score) + 1 structured LLM (≤90s). "
                                         "Watch server prints [remediation] RAG k/n …"
                                     ),
                                 )

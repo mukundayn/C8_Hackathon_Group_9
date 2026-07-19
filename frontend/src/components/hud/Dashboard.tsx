@@ -263,8 +263,15 @@ export default function Dashboard() {
   }, []);
 
   const processFile = (file: File) => {
+    const name = file.name || "";
+    if (/\.heic$/i.test(name) || file.type === "image/heic" || file.type === "image/heif") {
+      setUploadError(
+        "FORMAT REJECTION: HEIC/HEIF (iPhone default) is not supported. Export as PNG or JPEG first.",
+      );
+      return;
+    }
     const ok =
-      /\.(log|txt|json|png|jpe?g|gif|webp)$/i.test(file.name) ||
+      /\.(log|txt|json|png|jpe?g|gif|webp)$/i.test(name) ||
       file.type.startsWith("image/");
     if (!ok) {
       setUploadError(
@@ -516,9 +523,11 @@ export default function Dashboard() {
                 <p className="text-xs font-semibold text-white">
                   {analysis.running
                     ? "Analyzing…"
-                    : "Drag & drop logs (.log / .txt / .json) or screenshots (.png / .jpg)"}
+                    : "Drag & drop logs (.log / .txt / .json) or screenshots (.png / .jpg · under 1.5 MB)"}
                 </p>
-                <p className="text-[10px] text-slate-500 font-mono mt-0.5">OR CLICK TO SELECT FROM SYSTEM EXPLORER</p>
+                <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+                  OR CLICK TO SELECT · HEIC not supported — use PNG/JPEG
+                </p>
               </div>
 
               {analysis.fileName && !uploadError && (

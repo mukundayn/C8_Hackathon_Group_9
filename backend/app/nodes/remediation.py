@@ -5,7 +5,7 @@ from app.state import IncidentState
 from app.models import RemediationOutput
 from app.llm import get_llm
 from app.knowledge.query_builder import build_issue_query, build_filters_for_issue
-from app.knowledge.runbook_store import retrieve_with_scores
+from app.knowledge.confidence import retrieve_with_confidence
 from app.config import config
 from app.nodes._trace import trace_event
 
@@ -51,13 +51,16 @@ def remediation_node(state: IncidentState) -> dict:
     skipped = len(issues) - len(work)
     print(
         f"[remediation] start · {len(work)}/{len(issues)} issue(s) "
-        f"(skipped {skipped}) · fast RAG (no rewrite/no LLM-rerank) then 1 LLM",
+        f"(skipped {skipped}) · hybrid RAG + confidence rewrite "
+        f"(rerank=off, rewrite={'on' if config.RAG_CONFIDENCE_REWRITE else 'off'}) "
+        f"then 1 LLM",
         flush=True,
     )
 
     seen: dict[str, str] = {}
     grounding_by_issue: dict[str, list[str]] = {}
     retrieval_meta: dict[str, dict] = {}
+    rewrites = 0
 
     for idx, i in enumerate(work, 1):
         print(
@@ -67,11 +70,12 @@ def remediation_node(state: IncidentState) -> dict:
         )
         query = build_issue_query(i, sibling_issues=work)
         filters = build_filters_for_issue(i)
-        # Fast path: vector (+ optional BM25 hybrid). Never LLM-rerank here —
-        # cross-encoder miss used to fall back to N OpenRouter calls per issue.
+        # Confidence rewrite on low top-score; keep cross-encoder off by default for
+        # remediator (LLM-rerank fallback historically hung OpenRouter). Env can enable.
         try:
-            scored = retrieve_with_scores(
+            docs, meta = retrieve_with_confidence(
                 query,
+                issue=i,
                 k=config.RAG_TOP_K,
                 filters=filters or None,
                 use_hybrid=config.RAG_USE_HYBRID,
@@ -79,9 +83,8 @@ def remediation_node(state: IncidentState) -> dict:
             )
         except Exception as exc:  # noqa: BLE001
             print(f"[remediation]   RAG failed for {i.get('id')}: {exc}", flush=True)
-            scored = []
+            docs, meta = [], {"error": str(exc)}
 
-        docs = [d for d, _ in scored]
         titles = []
         for d in docs:
             title = d.metadata.get("original_title") or d.metadata.get("title", "runbook")
@@ -90,14 +93,25 @@ def remediation_node(state: IncidentState) -> dict:
             seen[label] = d.page_content
             titles.append(label)
         grounding_by_issue[i["id"]] = titles
+        if meta.get("rewritten"):
+            rewrites += 1
         retrieval_meta[i["id"]] = {
             "filters": filters,
-            "hybrid": config.RAG_USE_HYBRID,
-            "rerank": False,
+            "hybrid": meta.get("hybrid", config.RAG_USE_HYBRID),
+            "rerank": meta.get("rerank", False),
             "docs": titles,
-            "fast_path": True,
+            "confidence": meta.get("final_confidence") or meta.get("confidence"),
+            "rewritten": bool(meta.get("rewritten")),
+            "rewrite_query": meta.get("rewrite_query"),
+            "used_rewrite_results": meta.get("used_rewrite_results"),
+            "threshold": meta.get("threshold"),
         }
-        print(f"[remediation]   hits={len(titles)} · {titles[:2]}", flush=True)
+        conf = retrieval_meta[i["id"]].get("confidence") or {}
+        print(
+            f"[remediation]   hits={len(titles)} · top_conf={conf.get('top', '?')} "
+            f"rewritten={meta.get('rewritten')} · {titles[:2]}",
+            flush=True,
+        )
 
     runbooks_text = (
         "\n\n".join(f"[{title}]\n{content}" for title, content in seen.items())
@@ -177,13 +191,15 @@ def remediation_node(state: IncidentState) -> dict:
             trace_event(
                 "remediation",
                 f"Proposed {len(safe)} remediation(s) — KB HIT={hits} MISS={misses} "
-                f"(retrieved chunks={len(seen)}, fast_rag=True, issues={len(work)}).",
+                f"(chunks={len(seen)}, confidence_rewrites={rewrites}/{len(work)}, "
+                f"issues={len(work)}).",
                 {
                     "remediations": safe,
                     "retrieved_runbooks": grounding_by_issue,
                     "retrieval": retrieval_meta,
                     "kb_hits": hits,
                     "kb_misses": misses,
+                    "confidence_rewrites": rewrites,
                 },
             )
         ],

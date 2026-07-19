@@ -88,6 +88,9 @@ async function consumeAnalyzeStream(
   return sawDone;
 }
 
+/** Max screenshot size before base64 (~1.33×) blows SSE / Render memory. */
+const MAX_IMAGE_BYTES = 1_500_000; // 1.5 MB
+
 function isImageFile(file: File): boolean {
   if (file.type.startsWith("image/")) return true;
   return /\.(png|jpe?g|gif|webp)$/i.test(file.name);
@@ -143,6 +146,12 @@ export async function analyze(
     };
 
     if (isImageFile(file)) {
+      if (file.size > MAX_IMAGE_BYTES) {
+        throw new Error(
+          `Screenshot too large (${(file.size / 1e6).toFixed(1)} MB). ` +
+            `Resize/compress to under ${MAX_IMAGE_BYTES / 1e6} MB (PNG/JPEG), then retry.`,
+        );
+      }
       body.image_data = await fileToBase64(file);
       body.image_mime = imageMimeFor(file);
       body.image_description = `Operations screenshot upload: ${filename}`;
