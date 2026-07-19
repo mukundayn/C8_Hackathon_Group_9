@@ -115,12 +115,14 @@ export default function TrafficChart({ points }: TrafficChartProps) {
                   color: "#e2e8f0",
                 }}
                 cursor={{ stroke: "#0f172a", strokeWidth: 1 }}
-                formatter={(value: number, name: string) => {
-                  if (name === "Severity") {
-                    const rounded = Math.round(value);
-                    return [`${value.toFixed(2)} (${SEV_LABEL[rounded] ?? "?"})`, name];
+                formatter={(value, name) => {
+                  const n = typeof value === "number" ? value : Number(value ?? 0);
+                  const label = String(name ?? "");
+                  if (label === "Severity") {
+                    const rounded = Math.round(n);
+                    return [`${n.toFixed(2)} (${SEV_LABEL[rounded] ?? "?"})`, label];
                   }
-                  return [value, name];
+                  return [Number.isFinite(n) ? n : 0, label];
                 }}
               />
               <Legend wrapperStyle={{ fontSize: "10px", fontFamily: "monospace", marginTop: "10px" }} iconType="circle" />
