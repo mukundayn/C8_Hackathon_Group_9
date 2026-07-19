@@ -35,7 +35,10 @@ def test_webhook_logs_feeds_recent_events(client):
     payload = {"source": "n8n", "message": "ERROR db: pool exhausted", "severity": "error", "service": "database-service"}
     res = client.post("/api/webhook/logs", json=payload)
     assert res.status_code == 200
-    assert res.json()["ingested"] == 1
+    body = res.json()
+    assert body["ingested"] == 1
+    assert body["mode"] == "live_feed"
+    assert body["runs_llm"] is False
 
     recent = client.get("/api/events/recent").json()["events"]
     assert any(e["message"].startswith("ERROR db") for e in recent)

@@ -371,6 +371,9 @@ def image_analyzer_node(state: IncidentState) -> dict:
             "summary": analysis.description,
             "evidence": analysis.detected_errors,
         })
+        from app.threat_score import refine_threat_scores_llm
+
+        new_issues = refine_threat_scores_llm(new_issues)
 
     return {
         "image_analysis": analysis_dict,

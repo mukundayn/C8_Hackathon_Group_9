@@ -8,8 +8,10 @@ import {
   liveEventToLogEntry,
   categoryToExpertise,
   alertsFromLogs,
+  computeThreatIndex,
+  refineAlertsFromIssues,
 } from "./mappers";
-import type { LiveEvent } from "../types";
+import type { Issue, LiveEvent } from "../types";
 
 describe("flow-chart mappers", () => {
   it("starts with idle agents including optional image_analyzer", () => {
@@ -113,6 +115,67 @@ describe("live event normalization", () => {
   it("derives alerts only from ERROR/CRITICAL logs", () => {
     const logs = [liveEventToLogEntry(base), liveEventToLogEntry({ ...base, id: "e2", severity: "info" })];
     expect(alertsFromLogs(logs)).toHaveLength(1);
+  });
+
+  it("scores threats from signals, not fixed CRITICAL=9.1 / ERROR=7.8", () => {
+    const criticalDeadlock = computeThreatIndex({
+      severity: "CRITICAL",
+      message: "PostgreSQL deadlock detected on orders table",
+      category: "Database",
+      service: "database-service",
+      responseTimeMs: 1200,
+    });
+    const errorGeneric = computeThreatIndex({
+      severity: "ERROR",
+      message: "Failed to parse optional cache header",
+      category: "API",
+      service: "api-gateway",
+      responseTimeMs: 40,
+    });
+    expect(criticalDeadlock).toBeGreaterThan(errorGeneric);
+    expect(criticalDeadlock).toBeGreaterThan(7.5);
+    expect(errorGeneric).toBeLessThan(7.5);
+    // Deterministic for the same inputs
+    expect(
+      computeThreatIndex({
+        severity: "CRITICAL",
+        message: "PostgreSQL deadlock detected on orders table",
+        category: "Database",
+        service: "database-service",
+        responseTimeMs: 1200,
+      }),
+    ).toBe(criticalDeadlock);
+  });
+
+  it("uses backend threat_index when present on the live event", () => {
+    const log = liveEventToLogEntry({ ...base, threat_index: 8.3 });
+    expect(log.threatIndex).toBe(8.3);
+    expect(alertsFromLogs([log])[0]?.threatIndex).toBe(8.3);
+  });
+
+  it("overlays LLM issue scores onto matching live alerts after analyze", () => {
+    const alerts = alertsFromLogs([
+      liveEventToLogEntry({
+        ...base,
+        id: "e-deadlock",
+        message: "CRITICAL database: PostgreSQL deadlock detected on orders",
+      }),
+    ]);
+    const issues: Issue[] = [
+      {
+        id: "db-deadlock",
+        title: "PostgreSQL deadlock",
+        severity: "critical",
+        affected_service: "database-service",
+        summary: "Deadlock on orders",
+        evidence: ["CRITICAL database: PostgreSQL deadlock detected on orders"],
+        threat_index: 9.2,
+        threat_index_source: "llm",
+      },
+    ];
+    const refined = refineAlertsFromIssues(alerts, issues);
+    expect(refined[0]?.threatIndex).toBe(9.2);
+    expect(refined[0]?.threatSource).toBe("llm");
   });
 });
 

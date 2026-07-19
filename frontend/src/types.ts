@@ -29,6 +29,19 @@ export interface Issue {
   affected_service: string;
   summary: string;
   evidence?: string[];
+  severity_detail?: {
+    level?: string;
+    confidence?: number;
+    blast_radius?: string;
+    user_impact?: string;
+    escalation_needed?: boolean;
+    reasoning?: string;
+  };
+  /** Hybrid threat dial 0–10 (heuristic first; LLM may refine critical/high). */
+  threat_index?: number;
+  threat_index_source?: "heuristic" | "llm";
+  threat_index_heuristic?: number;
+  threat_index_rationale?: string;
 }
 
 /** How the remediation was grounded against the runbook KB. */
@@ -196,6 +209,8 @@ export interface LogEntry {
   message: string;
   userAssigned?: string;
   category: "API" | "Database" | "Auth" | "Network" | "System";
+  /** Deterministic signal score 0–10 (backend or client heuristic). */
+  threatIndex?: number;
 }
 
 export interface AnomalyAlert {
@@ -207,6 +222,8 @@ export interface AnomalyAlert {
   resolved: boolean;
   service?: string;
   threatIndex: number;
+  /** heuristic = live signal score; llm = refined during /analyze for critical/high. */
+  threatSource?: "heuristic" | "llm";
   /** Human-in-the-loop for newly learned criticals before Jira/Slack. */
   hitl?: boolean;
   hitlIssueId?: string;
@@ -224,6 +241,7 @@ export interface LiveEvent {
   category: string;
   source: string;
   response_time_ms?: number;
+  threat_index?: number;
 }
 
 /** Operator profile derived from Clerk + local expertise preference. */

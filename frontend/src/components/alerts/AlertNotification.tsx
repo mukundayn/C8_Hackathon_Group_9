@@ -13,6 +13,55 @@ interface AlertNotificationProps {
   onRejectHitl?: (alert: AnomalyAlert) => void;
 }
 
+/** Banner copy matches real severity — never label ERROR as CRITICAL. */
+function threatBanner(alert: AnomalyAlert): {
+  label: string;
+  border: string;
+  bar: string;
+  iconWrap: string;
+  icon: string;
+  title: string;
+} {
+  if (alert.hitl) {
+    return {
+      label: "HITL · NEWLY LEARNED",
+      border: "border-violet-500 bg-slate-950/95",
+      bar: "bg-violet-500",
+      iconWrap: "bg-violet-500/10 border-violet-500/30",
+      icon: "text-violet-300",
+      title: "text-violet-300",
+    };
+  }
+  if (alert.severity === "CRITICAL") {
+    return {
+      label: "CRITICAL THREAT",
+      border: "border-rose-500 bg-slate-950/95 shadow-[0_0_20px_rgba(244,63,94,0.12)]",
+      bar: "bg-rose-500",
+      iconWrap: "bg-rose-500/10 border-rose-500/30",
+      icon: "text-rose-400",
+      title: "text-rose-400",
+    };
+  }
+  if (alert.severity === "ERROR") {
+    return {
+      label: "ERROR · ELEVATED",
+      border: "border-amber-500/80 bg-slate-950/95 shadow-[0_0_16px_rgba(245,158,11,0.1)]",
+      bar: "bg-amber-500",
+      iconWrap: "bg-amber-500/10 border-amber-500/30",
+      icon: "text-amber-400",
+      title: "text-amber-400",
+    };
+  }
+  return {
+    label: "WARNING",
+    border: "border-yellow-600/70 bg-slate-950/95",
+    bar: "bg-yellow-500",
+    iconWrap: "bg-yellow-500/10 border-yellow-500/30",
+    icon: "text-yellow-400",
+    title: "text-yellow-400",
+  };
+}
+
 function AlertCard({
   alert,
   busyId,
@@ -28,44 +77,31 @@ function AlertCard({
   onApproveHitl?: (alert: AnomalyAlert) => Promise<void>;
   onRejectHitl?: (alert: AnomalyAlert) => void;
 }) {
+  const tone = threatBanner(alert);
   return (
     <motion.div
       layout
       initial={{ opacity: 0, x: 40, scale: 0.96 }}
       animate={{ opacity: 1, x: 0, scale: 1 }}
       exit={{ opacity: 0, x: 40, scale: 0.96 }}
-      className={`relative border backdrop-blur-xl rounded-xl p-3.5 shadow-[0_0_20px_rgba(244,63,94,0.12)] flex gap-3 text-left overflow-hidden flex-shrink-0 ${
-        alert.hitl ? "border-violet-500 bg-slate-950/95" : "border-rose-500 bg-slate-950/95"
-      }`}
+      className={`relative border backdrop-blur-xl rounded-xl p-3.5 flex gap-3 text-left overflow-hidden flex-shrink-0 ${tone.border}`}
     >
-      <div
-        className={`absolute top-0 left-0 w-1 h-full animate-pulse ${
-          alert.hitl ? "bg-violet-500" : "bg-rose-500"
-        }`}
-      />
-      <div
-        className={`p-2 border rounded-lg h-fit flex-shrink-0 ${
-          alert.hitl
-            ? "bg-violet-500/10 border-violet-500/30"
-            : "bg-rose-500/10 border-rose-500/30"
-        }`}
-      >
+      <div className={`absolute top-0 left-0 w-1 h-full animate-pulse ${tone.bar}`} />
+      <div className={`p-2 border rounded-lg h-fit flex-shrink-0 ${tone.iconWrap}`}>
         {alert.hitl ? (
-          <UserCheck className="w-5 h-5 text-violet-300" />
+          <UserCheck className={`w-5 h-5 ${tone.icon}`} />
         ) : (
-          <ShieldAlert className="w-5 h-5 text-rose-400" />
+          <ShieldAlert className={`w-5 h-5 ${tone.icon}`} />
         )}
       </div>
 
       <div className="flex-grow min-w-0">
         <div className="flex items-center justify-between mb-1 gap-2">
           <span
-            className={`text-[10px] font-mono uppercase tracking-widest font-extrabold flex items-center gap-1 ${
-              alert.hitl ? "text-violet-300" : "text-rose-400"
-            }`}
+            className={`text-[10px] font-mono uppercase tracking-widest font-extrabold flex items-center gap-1 ${tone.title}`}
           >
             <BellRing className="w-3 h-3" />
-            {alert.hitl ? "HITL · NEWLY LEARNED" : "CRITICAL THREAT ISO"}
+            {tone.label}
           </span>
           <span className="text-[9px] font-mono text-slate-500 flex-shrink-0">{alert.timestamp}</span>
         </div>
@@ -117,8 +153,16 @@ function AlertCard({
           </div>
         ) : (
           <div className="flex items-center justify-between mt-2.5 text-[10px] font-mono">
-            <span className="text-pink-400">
+            <span
+              className="text-pink-400"
+              title={
+                alert.threatSource === "llm"
+                  ? "LLM-refined during analyze (critical/high), anchored to the live signal score"
+                  : "Live signal score — severity, impact keywords, category, latency. LLM refine runs on analyze for critical/high."
+              }
+            >
               THREAT_LEVEL: {(alert.threatIndex ?? 0).toFixed(1)}/10.0
+              {alert.threatSource === "llm" ? " · LLM" : ""}
             </span>
             <button
               type="button"
@@ -126,7 +170,11 @@ function AlertCard({
                 playClickPulse();
                 onDismiss(alert.id);
               }}
-              className="px-2.5 py-1 border border-rose-500/20 rounded bg-rose-500/5 hover:bg-rose-500/20 hover:border-rose-400 text-rose-300 transition uppercase cursor-pointer text-[9px]"
+              className={`px-2.5 py-1 border rounded transition uppercase cursor-pointer text-[9px] ${
+                alert.severity === "CRITICAL"
+                  ? "border-rose-500/20 bg-rose-500/5 hover:bg-rose-500/20 hover:border-rose-400 text-rose-300"
+                  : "border-amber-500/20 bg-amber-500/5 hover:bg-amber-500/20 hover:border-amber-400 text-amber-300"
+              }`}
             >
               DEACTIVATE
             </button>

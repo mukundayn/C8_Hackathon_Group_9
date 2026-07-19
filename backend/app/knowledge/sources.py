@@ -1,7 +1,7 @@
-"""Multi-source knowledge adapters (local + mock enterprise sources).
+"""Optional multi-source document adapters (not wired into seed_if_empty).
 
-Real Confluence/Jira/GitHub connectors are out of scope; these mocks demonstrate
-the merge-before-rerank architecture with distinct `source` metadata.
+Production RAG uses ``runbook_seed.py``. The MOCK_* lists below are unused
+fixtures for experiments — do not treat them as live Confluence/Jira/K8s.
 """
 
 from __future__ import annotations

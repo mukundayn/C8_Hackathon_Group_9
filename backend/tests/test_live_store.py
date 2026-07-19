@@ -16,6 +16,34 @@ def test_add_event_normalizes_severity_and_category():
     assert ev["id"]
     assert ev["severity_score"] == 4
     assert ev["response_time_ms"] >= 1
+    assert 0.5 <= ev["threat_index"] <= 10.0
+    assert ev["threat_index"] == live_store.compute_threat_index(
+        severity="CRITICAL",
+        message="PostgreSQL connection pool exhausted",
+        category="Database",
+        service="database-service",
+        response_time_ms=ev["response_time_ms"],
+    )
+
+
+def test_threat_index_varies_by_signal_not_fixed_constants():
+    high = live_store.compute_threat_index(
+        severity="CRITICAL",
+        message="PostgreSQL deadlock detected — pool exhausted",
+        category="Database",
+        service="database-service",
+        response_time_ms=1500,
+    )
+    low = live_store.compute_threat_index(
+        severity="ERROR",
+        message="Failed to parse optional cache header",
+        category="API",
+        service="api-gateway",
+        response_time_ms=40,
+    )
+    assert high > low
+    assert high > 7.5
+    assert low < 7.5
 
 
 def test_add_events_from_text_one_per_line():

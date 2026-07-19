@@ -46,7 +46,7 @@ export default function TrafficChart({ points }: TrafficChartProps) {
             Vectored Network Traffic Analytics
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Volume/sec (left) + severity rollup (right) from the live ingestion buffer.
+            Volume/sec + severity from the live-feed buffer (webhook/logs) — not LangGraph output.
           </p>
         </div>
       </div>

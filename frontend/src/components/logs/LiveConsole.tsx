@@ -11,9 +11,12 @@ interface LiveConsoleProps {
 export default function LiveConsole({ logs, connected, onClear }: LiveConsoleProps) {
   return (
     <div className="border border-slate-800 bg-slate-900/40 rounded-2xl p-6 backdrop-blur-md text-left flex flex-col justify-between h-full min-h-[440px] relative">
-      <div className="absolute top-2 right-4 flex items-center gap-1 text-[9px] font-mono text-slate-500">
-        <Zap className="w-3 h-3 text-cyan-400 animate-pulse" />
-        FEED: LIVE_TELEMETRY
+      <div className="absolute top-2 right-4 flex items-center gap-1.5 text-[9px] font-mono">
+        <Zap className="w-3 h-3 text-cyan-400" />
+        <span className="text-slate-500">LIVE FEED</span>
+        <span className="px-1.5 py-0.5 rounded border border-amber-500/35 text-amber-300/90 bg-amber-950/20">
+          NO LLM
+        </span>
       </div>
 
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4 border-b border-slate-800/60 pb-4">
@@ -22,7 +25,8 @@ export default function LiveConsole({ logs, connected, onClear }: LiveConsolePro
             Live Log Stream Ingestion Console
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Real external events ingested via the webhook connector.
+            Telemetry from /api/webhook/logs (n8n, probes). Not a LangGraph analyze run — upload a
+            log in the Diagnostic Portal for full AI triage.
           </p>
         </div>
 
@@ -83,9 +87,9 @@ export default function LiveConsole({ logs, connected, onClear }: LiveConsolePro
         )}
       </div>
 
-      <div className="mt-4 border-t border-slate-800/80 pt-3 flex justify-between items-center text-[9px] font-mono text-slate-500">
-        <span>SOURCE: /api/events/recent</span>
-        <span>BUFFER INDEX: {logs.length}/120 CYCLES</span>
+      <div className="mt-4 border-t border-slate-800/80 pt-3 flex justify-between items-center text-[9px] font-mono text-slate-500 gap-2 flex-wrap">
+        <span>SOURCE: /api/events/recent · mode=live_feed</span>
+        <span>BUFFER: {logs.length}/120</span>
       </div>
     </div>
   );

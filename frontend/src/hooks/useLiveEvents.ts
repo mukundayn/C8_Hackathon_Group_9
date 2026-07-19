@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchRecentEvents } from "../lib/api";
-import { alertsFromLogs, liveEventToLogEntry } from "../lib/mappers";
-import type { AnomalyAlert, LogEntry } from "../types";
+import { alertsFromLogs, liveEventToLogEntry, refineAlertsFromIssues } from "../lib/mappers";
+import type { AnomalyAlert, Issue, LogEntry } from "../types";
 
 const POLL_MS = 3000;
 const MAX_LOGS = 120;
@@ -12,6 +12,8 @@ export interface UseLiveEvents {
   connected: boolean;
   dismissAlert: (id: string) => void;
   dismissAllAlerts: () => void;
+  /** Overlay LLM-refined threat scores from a finished /analyze onto live alerts. */
+  applyIssueThreatScores: (issues: Issue[]) => void;
   clearLogs: () => void;
 }
 
@@ -32,6 +34,11 @@ export function useLiveEvents(enabled: boolean): UseLiveEvents {
 
   const dismissAllAlerts = useCallback(() => {
     setAlerts((prev) => prev.map((a) => ({ ...a, resolved: true })));
+  }, []);
+
+  const applyIssueThreatScores = useCallback((issues: Issue[]) => {
+    if (!issues.length) return;
+    setAlerts((prev) => refineAlertsFromIssues(prev, issues));
   }, []);
 
   const clearLogs = useCallback(() => {
@@ -74,5 +81,13 @@ export function useLiveEvents(enabled: boolean): UseLiveEvents {
     };
   }, [enabled]);
 
-  return { logs, alerts, connected, dismissAlert, dismissAllAlerts, clearLogs };
+  return {
+    logs,
+    alerts,
+    connected,
+    dismissAlert,
+    dismissAllAlerts,
+    applyIssueThreatScores,
+    clearLogs,
+  };
 }

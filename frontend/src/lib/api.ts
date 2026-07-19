@@ -267,9 +267,14 @@ export async function approveHitl(body: HitlApproveRequest): Promise<HitlApprove
   return (await res.json()) as HitlApproveResponse;
 }
 
-/** The public URL an external system (e.g. n8n) should POST logs to. */
+/** Path A — live telemetry buffer only (no LangGraph). What n8n should use. */
 export function webhookIngestUrl(): string {
   return `${window.location.origin}/api/webhook/logs`;
+}
+
+/** Path B — full LangGraph analysis via webhook (separate from live feed). */
+export function webhookAnalyzeUrl(): string {
+  return `${window.location.origin}/api/webhook/ingest`;
 }
 
 export interface IntegrationStatus {

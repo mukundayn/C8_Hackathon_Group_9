@@ -442,59 +442,6 @@ async def hitl_approve(request: Request):
     }
 
 
-@api.get("/debug/pipeline-demo")
-def pipeline_demo_help():
-    """Evaluator cheat-sheet for the 4-level RAG + LangGraph terminal demo."""
-    return {
-        "title": "Netra pipeline evaluation demo",
-        "what_you_will_see": [
-            "WEBHOOK banner (path A) or DEBUG banner (path B)",
-            "LEVEL 1/4 memory → RAG hits → LangGraph nodes",
-            "LEVEL 2/4 database → RAG hits → LangGraph nodes",
-            "LEVEL 3/4 network → RAG hits → LangGraph nodes",
-            "LEVEL 4/4 critical → RAG hits → LangGraph nodes",
-            "DONE summary with PASS/FAIL per level",
-        ],
-        "path_A_webhook": {
-            "quick": "POST /api/webhook/logs/demo",
-            "flag_on_logs": {
-                "url": "POST /api/webhook/logs",
-                "body": {
-                    "source": "n8n",
-                    "message": "ERROR db: pool exhausted",
-                    "pipeline_demo": True,
-                    "demo_mode": "full",
-                },
-            },
-        },
-        "path_B_debug": {
-            "url": "POST /api/debug/pipeline-demo?mode=full",
-            "modes": {
-                "full": "RAG + full LangGraph per level (best for judges)",
-                "rag_only": "RAG only — faster smoke test without LLM",
-            },
-        },
-        "hint": "Run uvicorn in a visible terminal. All evidence prints there, not in the browser.",
-    }
-
-
-@api.post("/debug/pipeline-demo")
-async def pipeline_demo_run(request: Request):
-    """Path B: run the 4-level evaluation demo and print evidence to the server terminal.
-
-    Query: ``?mode=full`` (default) or ``?mode=rag_only``.
-    """
-    from app.pipeline_demo import run_pipeline_demo
-
-    mode = request.query_params.get("mode") or "full"
-    if mode not in ("full", "rag_only"):
-        mode = "full"
-    print("\n" + "#" * 72, flush=True)
-    print("  DEBUG ROUTE · POST /api/debug/pipeline-demo", flush=True)
-    print("#" * 72, flush=True)
-    return await run_pipeline_demo(trigger="debug:/api/debug/pipeline-demo", mode=mode)  # type: ignore[arg-type]
-
-
 # Webhook ingestion (/webhook/ingest, /webhook/logs, …) lives under the same prefixes.
 api.include_router(webhook.router)
 

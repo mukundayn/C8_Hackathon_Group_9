@@ -3,6 +3,7 @@ import type {
   AgentState,
   AnomalyAlert,
   Expertise,
+  Issue,
   LiveEvent,
   LogEntry,
 } from "../types";
@@ -232,10 +233,7 @@ export function applyNodeEvent(
       };
     }
 
-    // After fallback completes, cookbook is not stageIdx+1 (cookbook is +1 from fallback... wait
-    // fallback idx+1 IS cookbook). Good.
-
-    // Warm cookbook when remediation HIT but cookbook wasn't stageIdx+1
+    // Warm cookbook when remediation HIT skipped the linear +1 slot.
     if (remediationGoesToCookbook && idx === cookbookIdx) {
       return {
         ...a,
@@ -308,16 +306,97 @@ function normalizeCategory(raw: string): LogEntry["category"] {
   return match ?? "System";
 }
 
+/**
+ * Deterministic 0–10 threat score from severity + message/category signals.
+ * Mirrors ``live_store.compute_threat_index`` — not an LLM score.
+ */
+export function computeThreatIndex(input: {
+  severity: string;
+  message?: string;
+  category?: string;
+  service?: string;
+  responseTimeMs?: number;
+  confidence?: number;
+}): number {
+  const severity = normalizeSeverity(input.severity);
+  const message = input.message ?? "";
+  const service = input.service ?? "";
+  const category = normalizeCategory(input.category ?? "System");
+  const text = `${message} ${service}`.toLowerCase();
+
+  const base: Record<LogEntry["severity"], number> = {
+    CRITICAL: 7.2,
+    ERROR: 5.5,
+    WARN: 3.0,
+    INFO: 1.0,
+  };
+  const categoryBoost: Record<LogEntry["category"], number> = {
+    Database: 0.4,
+    Auth: 0.4,
+    Network: 0.25,
+    System: 0.25,
+    API: 0.1,
+  };
+
+  let score = base[severity] + categoryBoost[category];
+
+  const impactTiers: { keys: string[]; boost: number }[] = [
+    { keys: ["data loss", "breach", "ransomware", "full outage", "customer-facing outage"], boost: 0.9 },
+    { keys: ["deadlock", "oomkilled", "oom killed", "pool exhaust", "cascade", "panic", "segfault"], boost: 0.7 },
+    { keys: ["crashloop", "unavailable", "flood", "connection refused", "timeout storm"], boost: 0.55 },
+    { keys: ["timeout", " 500 ", "http 500", "degraded", "retry storm", "latency spike"], boost: 0.35 },
+  ];
+  let impact = 0;
+  for (const tier of impactTiers) {
+    if (tier.keys.some((k) => text.includes(k))) impact = Math.max(impact, tier.boost);
+  }
+  score += impact;
+
+  const rt = input.responseTimeMs;
+  if (typeof rt === "number" && Number.isFinite(rt)) {
+    if (rt >= 2000) score += 0.5;
+    else if (rt >= 1000) score += 0.3;
+    else if (rt >= 500) score += 0.15;
+  }
+
+  if (typeof input.confidence === "number" && Number.isFinite(input.confidence)) {
+    score += Math.max(0, Math.min(1, input.confidence)) * 0.4;
+  }
+
+  let h = 0;
+  const slice = text.slice(0, 240);
+  for (let i = 0; i < slice.length; i++) {
+    h = (h * 33 + slice.charCodeAt(i)) >>> 0;
+  }
+  score += (h % 21) / 100;
+
+  return Math.round(Math.max(0.5, Math.min(10, score)) * 10) / 10;
+}
+
 export function liveEventToLogEntry(ev: LiveEvent): LogEntry {
+  const severity = normalizeSeverity(ev.severity);
+  const category = normalizeCategory(ev.category);
+  const responseTime = ev.response_time_ms ?? 0;
+  const threatIndex =
+    typeof ev.threat_index === "number" && Number.isFinite(ev.threat_index)
+      ? Math.round(Math.max(0.5, Math.min(10, ev.threat_index)) * 10) / 10
+      : computeThreatIndex({
+          severity,
+          message: ev.message,
+          category,
+          service: ev.service,
+          responseTimeMs: responseTime,
+        });
   return {
     id: ev.id,
     timestamp: ev.timestamp,
     service: ev.service,
-    responseTime: ev.response_time_ms ?? 0,
-    severity: normalizeSeverity(ev.severity),
+    responseTime,
+    severity,
     message: ev.message,
-    category: normalizeCategory(ev.category),
+    category,
     userAssigned: ev.source,
+    threatIndex,
   };
 }
 
@@ -350,8 +429,18 @@ export function categoryToExpertise(
 export function alertsFromLogs(logs: LogEntry[]): AnomalyAlert[] {
   return logs
     .filter((l) => l.severity === "CRITICAL" || l.severity === "ERROR")
-    .map(
-      (l): AnomalyAlert => ({
+    .map((l): AnomalyAlert => {
+      const threatIndex =
+        typeof l.threatIndex === "number" && Number.isFinite(l.threatIndex)
+          ? l.threatIndex
+          : computeThreatIndex({
+              severity: l.severity,
+              message: l.message,
+              category: l.category,
+              service: l.service,
+              responseTimeMs: l.responseTime,
+            });
+      return {
         id: `alt-${l.id}`,
         timestamp: l.timestamp,
         logId: l.id,
@@ -359,7 +448,62 @@ export function alertsFromLogs(logs: LogEntry[]): AnomalyAlert[] {
         message: l.message,
         resolved: false,
         service: l.service,
-        threatIndex: l.severity === "CRITICAL" ? 9.1 : 7.8,
-      }),
-    );
+        threatIndex,
+        threatSource: "heuristic",
+      };
+    });
+}
+
+function _overlap(a: string, b: string): boolean {
+  const x = a.toLowerCase().trim();
+  const y = b.toLowerCase().trim();
+  if (!x || !y) return false;
+  if (x.includes(y.slice(0, Math.min(48, y.length))) || y.includes(x.slice(0, Math.min(48, x.length)))) {
+    return true;
+  }
+  const tokens = y.split(/[^a-z0-9]+/).filter((t) => t.length >= 5);
+  let hits = 0;
+  for (const t of tokens.slice(0, 8)) {
+    if (x.includes(t)) hits += 1;
+  }
+  return hits >= 2;
+}
+
+/**
+ * After /analyze completes, overlay LLM-refined threat scores onto matching
+ * live CRITICAL/ERROR alerts (heuristic stays until then).
+ */
+export function refineAlertsFromIssues(
+  alerts: AnomalyAlert[],
+  issues: Issue[],
+): AnomalyAlert[] {
+  const scored = issues.filter(
+    (i) =>
+      typeof i.threat_index === "number" &&
+      Number.isFinite(i.threat_index) &&
+      (i.severity === "critical" || i.severity === "high") &&
+      i.threat_index_source === "llm",
+  );
+  if (!scored.length) return alerts;
+
+  return alerts.map((alert) => {
+    if (alert.resolved || alert.hitl) return alert;
+    if (alert.severity !== "CRITICAL" && alert.severity !== "ERROR") return alert;
+
+    const match = scored.find((issue) => {
+      const evidence = issue.evidence ?? [];
+      if (evidence.some((e) => _overlap(alert.message, e))) return true;
+      if (issue.title && _overlap(alert.message, issue.title)) return true;
+      if (issue.summary && _overlap(alert.message, issue.summary)) return true;
+      const svc = (issue.affected_service || "").toLowerCase();
+      const asvc = (alert.service || "").toLowerCase();
+      return Boolean(svc && asvc && (svc.includes(asvc) || asvc.includes(svc)) && issue.title && _overlap(alert.message, issue.title));
+    });
+    if (!match || typeof match.threat_index !== "number") return alert;
+    return {
+      ...alert,
+      threatIndex: match.threat_index,
+      threatSource: "llm",
+    };
+  });
 }

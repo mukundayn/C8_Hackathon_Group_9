@@ -7,6 +7,7 @@ from app.models import ClassifierOutput
 from app.parsing import parse_logs, cluster_errors
 from app.llm import get_llm
 from app.nodes._trace import trace_event
+from app.threat_score import refine_threat_scores_llm
 
 CLASSIFY_PROMPT = """You are a senior SRE triaging a production incident from log clusters.
 
@@ -149,15 +150,22 @@ def classifier_node(state: IncidentState) -> dict:
         print(f"[classifier] LLM failed: {llm_note} — heuristic fallback", flush=True)
         issues = _issues_from_clusters(clusters)
 
+    # Hybrid threat dial: heuristic on every issue, LLM refine critical/high only.
+    issues = refine_threat_scores_llm(issues)
+
     severity_counts: dict[str, int] = {}
+    llm_threat = 0
     for i in issues:
         sev = i.get("severity", "unknown")
         severity_counts[sev] = severity_counts.get(sev, 0) + 1
+        if i.get("threat_index_source") == "llm":
+            llm_threat += 1
 
     msg = (
         f"Parsed {len(entries)} lines, {len(clusters)} clusters, "
         f"detected {len(issues)} issue(s). "
-        f"Severity breakdown: {severity_counts}"
+        f"Severity breakdown: {severity_counts}. "
+        f"Threat scores: {llm_threat} LLM-refined / {len(issues)} total"
     )
     if llm_note:
         msg += f" [{llm_note}; used heuristic fallback]"
@@ -175,6 +183,7 @@ def classifier_node(state: IncidentState) -> dict:
                     "severity_breakdown": severity_counts,
                     "llm_error": llm_note or None,
                     "heuristic": bool(llm_note),
+                    "threat_llm_refined": llm_threat,
                 },
             )
         ],

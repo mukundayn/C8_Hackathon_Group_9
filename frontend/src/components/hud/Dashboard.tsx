@@ -19,7 +19,7 @@ import { useLiveEvents } from "../../hooks/useLiveEvents";
 import { useTraffic } from "../../hooks/useTraffic";
 import { useHudMetrics } from "../../hooks/useHudMetrics";
 import { useOperator } from "../../hooks/useOperator";
-import { AGENT_ORDER } from "../../lib/mappers";
+import { AGENT_ORDER, computeThreatIndex } from "../../lib/mappers";
 import { summarizeKbPath } from "../../lib/kbPath";
 import { approveHitl, fetchIntegrationStatus, type IntegrationStatus } from "../../lib/api";
 import {
@@ -50,7 +50,7 @@ export default function Dashboard() {
   const { operator } = useOperator();
   const analysis = useAnalysis(operator.expertise);
   const live = useLiveEvents(true);
-  const { dismissAlert, dismissAllAlerts } = live;
+  const { dismissAlert, dismissAllAlerts, applyIssueThreatScores } = live;
   const traffic = useTraffic(true, analysis.runId);
   const hud = useHudMetrics(true, analysis.runId);
 
@@ -127,27 +127,53 @@ export default function Dashboard() {
       second: "2-digit",
       hour12: false,
     }).format(new Date());
+    const issues = analysis.result?.issues ?? [];
     setHitlAlerts(
-      pending.map(
-        (p): AnomalyAlert => ({
+      pending.map((p): AnomalyAlert => {
+        const message =
+          p.summary ||
+          p.fix_summary ||
+          `Newly learned pattern for ${p.title ?? p.issue_id}. Approve to open Jira + Slack.`;
+        const linked = issues.find((i) => i.id === p.issue_id);
+        const sevRaw = String(p.severity || linked?.severity || "critical");
+        const confidence = linked?.severity_detail?.confidence;
+        const llmScore =
+          typeof linked?.threat_index === "number" && Number.isFinite(linked.threat_index)
+            ? linked.threat_index
+            : null;
+        return {
           id: `hitl-${p.issue_id}`,
           timestamp: now,
-          severity: "CRITICAL",
-          message:
-            p.summary ||
-            p.fix_summary ||
-            `Newly learned pattern for ${p.title ?? p.issue_id}. Approve to open Jira + Slack.`,
+          severity: /crit|fatal|panic/i.test(sevRaw) ? "CRITICAL" : "ERROR",
+          message,
           resolved: false,
           service: p.affected_service,
-          threatIndex: 9.4,
+          threatIndex:
+            llmScore ??
+            computeThreatIndex({
+              severity: sevRaw,
+              message: `${p.title ?? ""} ${message}`,
+              category: p.category || linked?.category,
+              service: p.affected_service,
+              confidence: typeof confidence === "number" ? confidence : undefined,
+            }),
+          threatSource:
+            llmScore != null ? linked?.threat_index_source ?? "heuristic" : "heuristic",
           hitl: true,
           hitlIssueId: p.issue_id,
           hitlStatus: "pending",
           title: p.title,
-        }),
-      ),
+        };
+      }),
     );
   }, [analysis.result]);
+
+  // When analyze finishes, overlay LLM threat scores onto matching live CRITICAL/ERROR cards.
+  useEffect(() => {
+    const issues = analysis.result?.issues;
+    if (analysis.running || !issues?.length) return;
+    applyIssueThreatScores(issues);
+  }, [analysis.running, analysis.result, applyIssueThreatScores]);
 
   // Roll cockpit tiles once per completed analyze (2nd+ files keep accumulating).
   useLayoutEffect(() => {

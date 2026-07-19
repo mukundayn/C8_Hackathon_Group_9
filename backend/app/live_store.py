@@ -3,7 +3,7 @@
 Populated by external systems (n8n, Datadog, Grafana, PagerDuty, …) via the
 webhook endpoints — and by /analyze uploads so the cockpit gauges stay live.
 Feeds the live log console and traffic analytics.
-This is intentionally process-local and ephemeral — no DB required for the demo.
+Process-local and ephemeral (ring buffer) — restarts clear the buffer.
 """
 
 from __future__ import annotations
@@ -94,6 +94,80 @@ def _guess_category(message: str, service: str) -> str:
     return "API"
 
 
+# Impact keywords → additive boosts (capped). Keep in sync with frontend computeThreatIndex.
+_IMPACT_TIERS: tuple[tuple[tuple[str, ...], float], ...] = (
+    (("data loss", "breach", "ransomware", "full outage", "customer-facing outage"), 0.9),
+    (("deadlock", "oomkilled", "oom killed", "pool exhaust", "cascade", "panic", "segfault"), 0.7),
+    (("crashloop", "unavailable", "flood", "connection refused", "timeout storm"), 0.55),
+    (("timeout", " 500 ", "http 500", "degraded", "retry storm", "latency spike"), 0.35),
+)
+
+_CATEGORY_BOOST: dict[str, float] = {
+    "Database": 0.4,
+    "Auth": 0.4,
+    "Network": 0.25,
+    "System": 0.25,
+    "API": 0.1,
+}
+
+_SEVERITY_BASE: dict[str, float] = {
+    "CRITICAL": 7.2,
+    "ERROR": 5.5,
+    "WARN": 3.0,
+    "INFO": 1.0,
+}
+
+
+def compute_threat_index(
+    *,
+    severity: str,
+    message: str = "",
+    category: str = "",
+    service: str = "",
+    response_time_ms: Optional[int] = None,
+    confidence: Optional[float] = None,
+) -> float:
+    """Deterministic 0–10 threat score from severity + message/category signals.
+
+    Not an LLM score — transparent SRE heuristics so CRITICAL ≠ one fixed 9.1
+    and ERROR ≠ one fixed 7.8 for every line.
+    """
+    sev = _normalize_severity(severity)
+    text = f"{message} {service}".lower()
+    score = _SEVERITY_BASE.get(sev, 1.0)
+    score += _CATEGORY_BOOST.get(category or _guess_category(message, service), 0.1)
+
+    impact = 0.0
+    for keywords, boost in _IMPACT_TIERS:
+        if any(k.strip() in text for k in keywords):
+            impact = max(impact, boost)
+    score += impact
+
+    if response_time_ms is not None:
+        rt = int(response_time_ms)
+        if rt >= 2000:
+            score += 0.5
+        elif rt >= 1000:
+            score += 0.3
+        elif rt >= 500:
+            score += 0.15
+
+    if confidence is not None:
+        try:
+            c = max(0.0, min(1.0, float(confidence)))
+            score += c * 0.4  # classifier confidence nudges HITL / issue scores
+        except (TypeError, ValueError):
+            pass
+
+    # Stable sub-point spread so identical severity still differs by content.
+    h = 0
+    for ch in text[:240]:
+        h = (h * 33 + ord(ch)) & 0xFFFFFFFF
+    score += (h % 21) / 100.0  # 0.00 … 0.20
+
+    return round(max(0.5, min(10.0, score)), 1)
+
+
 def add_event(
     *,
     message: str,
@@ -114,6 +188,7 @@ def add_event(
     sev = _normalize_severity(severity)
     cat = category or _guess_category(message, service)
     process_ms = max(1, int(round((time.perf_counter() - t0) * 1000)))
+    rt_ms = int(response_time_ms) if response_time_ms is not None else process_ms
     event = {
         "id": uuid.uuid4().hex,
         "timestamp": timestamp or datetime.now(_IST).strftime("%H:%M:%S"),
@@ -122,8 +197,15 @@ def add_event(
         "message": message.strip(),
         "category": cat,
         "source": source,
-        "response_time_ms": int(response_time_ms) if response_time_ms is not None else process_ms,
+        "response_time_ms": rt_ms,
         "severity_score": SEVERITY_SCORE.get(sev, 1),
+        "threat_index": compute_threat_index(
+            severity=sev,
+            message=message,
+            category=cat,
+            service=service,
+            response_time_ms=rt_ms,
+        ),
     }
     with _lock:
         _events.append(event)

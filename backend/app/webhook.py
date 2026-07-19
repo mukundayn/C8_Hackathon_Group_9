@@ -102,6 +102,16 @@ def _coerce_webhook_event(body: dict[str, Any]) -> WebhookEvent:
     )
 
 
+def _live_feed_meta(**extra: Any) -> dict[str, Any]:
+    """Honest contract for /webhook/logs — telemetry buffer only, no LangGraph."""
+    return {
+        "mode": "live_feed",
+        "runs_llm": False,
+        "full_analysis": "POST /api/webhook/ingest (LangGraph) or upload via cockpit /api/analyze",
+        **extra,
+    }
+
+
 def _ingest_loose_body(payload: dict[str, Any], default_source: str = "n8n") -> dict[str, Any]:
     """Shared logic for /logs — push into live_store, no LLM."""
     source = str(payload.get("source", default_source))
@@ -111,7 +121,11 @@ def _ingest_loose_body(payload: dict[str, Any], default_source: str = "n8n") -> 
         text = "\n".join(str(x) for x in logs) if isinstance(logs, list) else str(logs)
         added = live_store.add_events_from_text(text, source=source)
         logger.info("[webhook/logs] ingested %d line(s) from source=%s", added, source)
-        return {"status": "ok", "ingested": added, "buffer_size": len(live_store.recent())}
+        return _live_feed_meta(
+            status="ok",
+            ingested=added,
+            buffer_size=len(live_store.recent()),
+        )
 
     # n8n Parse often uses logEntry / fileName instead of message / service
     message = payload.get("message") or payload.get("logEntry") or payload.get("text")
@@ -126,21 +140,21 @@ def _ingest_loose_body(payload: dict[str, Any], default_source: str = "n8n") -> 
             timestamp=payload.get("timestamp") if isinstance(payload.get("timestamp"), str) else None,
         )
         logger.info("[webhook/logs] ingested 1 event id=%s source=%s", ev["id"], source)
-        return {
-            "status": "ok",
-            "ingested": 1,
-            "event_id": ev["id"],
-            "buffer_size": len(live_store.recent()),
-        }
+        return _live_feed_meta(
+            status="ok",
+            ingested=1,
+            event_id=ev["id"],
+            buffer_size=len(live_store.recent()),
+        )
 
     ev = live_store.add_event(message=json.dumps(payload), source=source)
     logger.info("[webhook/logs] ingested raw JSON as 1 event id=%s", ev["id"])
-    return {
-        "status": "ok",
-        "ingested": 1,
-        "event_id": ev["id"],
-        "buffer_size": len(live_store.recent()),
-    }
+    return _live_feed_meta(
+        status="ok",
+        ingested=1,
+        event_id=ev["id"],
+        buffer_size=len(live_store.recent()),
+    )
 
 
 async def _run_analysis(logs: str, request_id: str, source: str) -> dict:
@@ -280,7 +294,6 @@ async def get_result(request_id: str):
 
 @router.post("/logs")
 async def ingest_logs(
-    request: Request,
     payload: dict[str, Any] = Body(...),
 ):
     """Lightweight ingestion for n8n / monitoring — live buffer only (no LLM).
@@ -289,73 +302,22 @@ async def ingest_logs(
       - {"logs": ["line", ...]} or {"logs": "multi\\nline"}
       - {"message": "...", "severity": "...", "service": "...", "category": "..."}
       - any other JSON → one stringified event
-
-    Evaluation (path A): set ``"pipeline_demo": true`` (or ``?pipeline_demo=1``)
-    to print a 4-level RAG + LangGraph demo in the server terminal after ingest.
     """
-    from app.pipeline_demo import print_webhook_ingest_banner, run_pipeline_demo
-
-    # Strip demo flags so they are not treated as log fields.
-    want_demo = bool(payload.pop("pipeline_demo", False))
-    mode = str(payload.pop("demo_mode", None) or request.query_params.get("mode") or "full")
-    if request.query_params.get("pipeline_demo") in ("1", "true", "yes"):
-        want_demo = True
-    if mode not in ("full", "rag_only"):
-        mode = "full"
+    # Ignore legacy judge-harness keys if a client still sends them.
+    payload.pop("pipeline_demo", None)
+    payload.pop("demo_mode", None)
 
     result = _ingest_loose_body(payload, default_source="n8n")
-    preview = str(
-        payload.get("message")
-        or payload.get("logs")
-        or payload
+    preview = payload.get("message") or payload.get("logs") or payload
+    if not isinstance(preview, str):
+        preview = json.dumps(preview)[:200]
+    logger.info(
+        "[webhook/logs] live_feed source=%s ingested=%s preview=%s",
+        payload.get("source", "n8n"),
+        result.get("ingested"),
+        str(preview)[:200],
     )
-    print_webhook_ingest_banner(
-        source=str(payload.get("source", "n8n")),
-        ingested=int(result.get("ingested") or 0),
-        preview=preview if isinstance(preview, str) else json.dumps(preview)[:200],
-        pipeline_demo=want_demo,
-    )
-
-    if want_demo:
-        demo = await run_pipeline_demo(trigger="webhook:/api/webhook/logs", mode=mode)  # type: ignore[arg-type]
-        return {**result, "pipeline_demo": demo}
     return result
-
-
-@router.post("/logs/demo")
-async def ingest_logs_demo(request: Request):
-    """Path A shortcut for evaluators: ingest a sample webhook event, then run the 4-level demo.
-
-    Watch the **uvicorn terminal** for LEVEL 1/4 … 4/4 banners (RAG hits + LangGraph nodes).
-    Query: ``?mode=full`` (default) or ``?mode=rag_only``.
-    """
-    from app.pipeline_demo import print_webhook_ingest_banner, run_pipeline_demo
-
-    mode = request.query_params.get("mode") or "full"
-    if mode not in ("full", "rag_only"):
-        mode = "full"
-
-    sample = {
-        "source": "eval-webhook",
-        "message": "CRITICAL auth-service: JWT verification flood — starting pipeline demo",
-        "severity": "CRITICAL",
-        "service": "auth-service",
-        "category": "Auth",
-    }
-    result = _ingest_loose_body(sample, default_source="eval-webhook")
-    print_webhook_ingest_banner(
-        source="eval-webhook",
-        ingested=int(result.get("ingested") or 0),
-        preview=sample["message"],
-        pipeline_demo=True,
-    )
-    demo = await run_pipeline_demo(trigger="webhook:/api/webhook/logs/demo", mode=mode)  # type: ignore[arg-type]
-    return {
-        "status": "ok",
-        "message": "Webhook sample ingested. 4-level pipeline demo finished — see server terminal.",
-        "ingest": result,
-        "pipeline_demo": demo,
-    }
 
 
 @router.post("/test")
@@ -375,8 +337,8 @@ async def test_webhook():
         "message": "Webhook endpoint is reachable. A sample CRITICAL event was pushed to the live buffer.",
         "ingest": result,
         "endpoints": {
-            "live_feed": "POST /api/webhook/logs  (no LLM — fills Live Console)",
-            "full_analysis": "POST /api/webhook/ingest  (runs LangGraph pipeline)",
+            "live_feed": "POST /api/webhook/logs  (mode=live_feed, runs_llm=false)",
+            "full_analysis": "POST /api/webhook/ingest  (LangGraph) or cockpit /api/analyze",
         },
         "example_logs_body": {
             "source": "n8n",
@@ -385,6 +347,8 @@ async def test_webhook():
             "service": "auth-service",
             "category": "Auth",
         },
+        "mode": "live_feed",
+        "runs_llm": False,
     }
 
 
