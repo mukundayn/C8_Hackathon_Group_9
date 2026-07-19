@@ -14,6 +14,11 @@ import { motion, AnimatePresence } from "motion/react";
 import type { Expertise } from "../types";
 import { loadExpertise, saveExpertise } from "../hooks/useOperator";
 import {
+  loadOpenRouterKey,
+  saveOpenRouterKey,
+  looksLikeOpenRouterKey,
+} from "../lib/openrouterKey";
+import {
   playHoverTick,
   playClickPulse,
   playBootSweep,
@@ -46,6 +51,8 @@ export default function LoginPage({ isCallback }: LoginPageProps) {
   const { signIn, fetchStatus } = useSignIn();
   const [sound, setSound] = useState(isSoundEnabled());
   const [expertise, setExpertise] = useState<Expertise[]>(loadExpertise);
+  const [apiKey, setApiKey] = useState(loadOpenRouterKey);
+  const [showKey, setShowKey] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [booting, setBooting] = useState(false);
   const [decryptedText, setDecryptedText] = useState(PHRASES[0]);
@@ -85,6 +92,12 @@ export default function LoginPage({ isCallback }: LoginPageProps) {
       setError("AUTHENTICATION EXCEPTION: select at least one operational expertise domain.");
       return;
     }
+    if (!looksLikeOpenRouterKey(apiKey)) {
+      setError(
+        "OPENROUTER KEY REQUIRED: paste your sk-or-… key from openrouter.ai so LLM calls bill your account.",
+      );
+      return;
+    }
     if (!signIn || fetchStatus === "fetching") {
       setError("AUTH CORE INITIALIZING — retry in a moment.");
       return;
@@ -92,6 +105,7 @@ export default function LoginPage({ isCallback }: LoginPageProps) {
     setBooting(true);
     playBootSweep();
     saveExpertise(expertise);
+    saveOpenRouterKey(apiKey);
     const { error: ssoError } = await signIn.sso({
       strategy: "oauth_google",
       redirectCallbackUrl: "/login/sso-callback",
@@ -193,12 +207,54 @@ export default function LoginPage({ isCallback }: LoginPageProps) {
               </p>
             </div>
 
-            {/* Secrets managed server-side notice (no client-side API key) */}
-            <div className="flex items-start gap-2.5 p-3 rounded-lg bg-slate-950 border border-slate-800 text-slate-400">
-              <Key className="w-4 h-4 text-cyan-500/80 mt-0.5 flex-shrink-0" />
-              <p className="text-[10px] font-mono leading-relaxed">
-                LLM credentials are held securely server-side (OpenRouter). No API keys are entered
-                or stored in the browser.
+            {/* Bring-your-own OpenRouter key — each login bills their own credits */}
+            <div
+              className={`space-y-2 p-2 rounded-xl border transition ${
+                !looksLikeOpenRouterKey(apiKey)
+                  ? "border-amber-500/30 bg-amber-950/5"
+                  : "border-transparent"
+              }`}
+            >
+              <div className="flex justify-between items-center">
+                <label
+                  className={`flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider ${
+                    !looksLikeOpenRouterKey(apiKey) ? "text-amber-300 font-bold" : "text-slate-400"
+                  }`}
+                >
+                  <Key className="w-3.5 h-3.5" />
+                  OpenRouter API Key (BYOK)
+                </label>
+                {!looksLikeOpenRouterKey(apiKey) && (
+                  <span className="text-[10px] font-mono text-amber-400 animate-pulse font-bold">
+                    REQUIRED *
+                  </span>
+                )}
+              </div>
+              <div className="relative">
+                <input
+                  type={showKey ? "text" : "password"}
+                  value={apiKey}
+                  onChange={(e) => {
+                    setApiKey(e.target.value);
+                    if (error?.includes("OPENROUTER")) setError(null);
+                  }}
+                  placeholder="sk-or-v1-…"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 pr-16 text-xs font-mono text-cyan-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500/50"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowKey((v) => !v)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-mono uppercase text-slate-500 hover:text-cyan-400 cursor-pointer"
+                >
+                  {showKey ? "Hide" : "Show"}
+                </button>
+              </div>
+              <p className="text-[9px] font-mono text-slate-500 leading-relaxed">
+                Stored only in your browser. Sent with each analyze so LLM usage hits{" "}
+                <span className="text-cyan-500/80">your</span> OpenRouter credits — not the host
+                account. Get a key at openrouter.ai
               </p>
             </div>
 
@@ -250,7 +306,7 @@ export default function LoginPage({ isCallback }: LoginPageProps) {
               <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-ping" />
               NETRA NETWORK: ACTIVE
             </span>
-            <span>SECURE SECRETS: SERVER_SIDE</span>
+            <span>BYOK · YOUR OPENROUTER KEY</span>
           </div>
         </div>
       </div>

@@ -7,6 +7,7 @@ import type {
   NodeEvent,
 } from "../types";
 import { parseSseFrames, type SseFrame } from "./sse";
+import { loadOpenRouterKey } from "./openrouterKey";
 
 const BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 
@@ -25,7 +26,7 @@ async function readErrorDetail(res: Response): Promise<string> {
     if (res.status === 502 || res.status === 503 || res.status === 504) {
       return (
         "Backend/proxy unavailable (often Render cold-start, crash, or OpenRouter outage). " +
-        "Check the API is up (`/api/ping`), restart uvicorn/Render, verify OPENROUTER_API_KEY. " +
+        "Check the API is up (`/api/ping`), restart uvicorn/Render, and confirm your OpenRouter BYOK on login. " +
         `Upstream said: ${text.replace(/\s+/g, " ").slice(0, 160)}`
       );
     }
@@ -101,18 +102,26 @@ export async function analyze(
   let sawDone = false;
   const url = apiUrl("/api/analyze");
   try {
+    const openrouterKey = loadOpenRouterKey();
+    if (!openrouterKey) {
+      throw new Error(
+        "OpenRouter API key missing. Return to login and paste your sk-or-… key so analysis bills your account.",
+      );
+    }
     const logText = await file.text();
     const res = await fetch(url, {
       method: "POST",
       headers: {
         Accept: "text/event-stream",
         "Content-Type": "application/json",
+        "X-OpenRouter-Api-Key": openrouterKey,
       },
       credentials: "same-origin",
       body: JSON.stringify({
         log_text: logText,
         filename: file.name || "upload.log",
         expertise: expertise.join(","),
+        openrouter_api_key: openrouterKey,
       }),
     });
 

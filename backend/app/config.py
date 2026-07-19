@@ -55,7 +55,12 @@ class Config:
 
 
 config = Config()
-assert config.OPENROUTER_API_KEY, "OPENROUTER_API_KEY must be set in .env"
+if not config.OPENROUTER_API_KEY:
+    print(
+        "[config] OPENROUTER_API_KEY unset — UI operators must paste their own key on login. "
+        "Webhook/ingest LLM paths need a server key or a key in the request.",
+        flush=True,
+    )
 
 if config.LANGSMITH_API_KEY:
     os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")

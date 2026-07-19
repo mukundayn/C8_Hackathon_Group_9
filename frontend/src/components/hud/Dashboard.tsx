@@ -22,6 +22,12 @@ import { useOperator } from "../../hooks/useOperator";
 import { AGENT_ORDER } from "../../lib/mappers";
 import { summarizeKbPath } from "../../lib/kbPath";
 import { approveHitl, fetchIntegrationStatus, type IntegrationStatus } from "../../lib/api";
+import {
+  loadOpenRouterKey,
+  saveOpenRouterKey,
+  looksLikeOpenRouterKey,
+  maskOpenRouterKey,
+} from "../../lib/openrouterKey";
 import type { AnomalyAlert, JiraTicket, SlackResult } from "../../types";
 import {
   isSoundEnabled,
@@ -100,6 +106,9 @@ export default function Dashboard() {
     slack: "mock",
   });
   const hitlSeededFor = useRef<string | null>(null);
+  const [openRouterKey, setOpenRouterKey] = useState(loadOpenRouterKey);
+  const [keyDraft, setKeyDraft] = useState(loadOpenRouterKey);
+  const [editingKey, setEditingKey] = useState(() => !looksLikeOpenRouterKey(loadOpenRouterKey()));
   /** Session rollups — accumulate across successive files (do not reset per run). */
   const [sessionKbHits, setSessionKbHits] = useState(0);
   const [sessionKbLearned, setSessionKbLearned] = useState(0);
@@ -340,6 +349,65 @@ export default function Dashboard() {
           </button>
         </div>
       </header>
+
+      {/* Bring-your-own OpenRouter key — required for analyze */}
+      <div
+        className={`relative z-10 mb-4 rounded-xl border px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3 ${
+          looksLikeOpenRouterKey(openRouterKey)
+            ? "border-slate-800 bg-slate-900/40"
+            : "border-amber-500/40 bg-amber-950/20"
+        }`}
+      >
+        <div className="flex-1 text-left min-w-0">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">
+            OpenRouter BYOK {looksLikeOpenRouterKey(openRouterKey) ? "· ACTIVE" : "· REQUIRED"}
+          </div>
+          {editingKey ? (
+            <input
+              type="password"
+              value={keyDraft}
+              onChange={(e) => setKeyDraft(e.target.value)}
+              placeholder="sk-or-v1-… paste your key"
+              autoComplete="off"
+              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-cyan-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500/50"
+            />
+          ) : (
+            <p className="text-xs font-mono text-cyan-300/90 truncate">
+              {maskOpenRouterKey(openRouterKey)} · LLM calls bill this key
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {editingKey ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (!looksLikeOpenRouterKey(keyDraft)) return;
+                playClickPulse();
+                saveOpenRouterKey(keyDraft);
+                setOpenRouterKey(keyDraft.trim());
+                setEditingKey(false);
+              }}
+              disabled={!looksLikeOpenRouterKey(keyDraft)}
+              className="px-3 py-1.5 rounded border border-cyan-500/40 bg-cyan-950/30 text-cyan-300 text-[10px] font-mono uppercase cursor-pointer disabled:opacity-40"
+            >
+              Save key
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                playClickPulse();
+                setKeyDraft(openRouterKey);
+                setEditingKey(true);
+              }}
+              className="px-3 py-1.5 rounded border border-slate-700 bg-slate-950 text-slate-400 hover:text-cyan-300 text-[10px] font-mono uppercase cursor-pointer"
+            >
+              Change
+            </button>
+          )}
+        </div>
+      </div>
 
       <MetricGauges
         ingestRate={hud.ingest_total}

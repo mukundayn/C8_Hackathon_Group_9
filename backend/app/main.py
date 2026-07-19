@@ -15,6 +15,7 @@ from app.graph import graph
 from app.knowledge.runbook_store import seed_if_empty
 from app.debug_log import MAIN_SOURCE, describe_node_update, debug_line
 from app import webhook, live_store
+from app.openrouter_key import reset_request_openrouter_key, set_request_openrouter_key
 
 # Directory where the built React app lives (set via STATIC_DIR env var).
 # In production (Render) this is ./static (populated by build.sh).
@@ -117,14 +118,22 @@ async def analyze(request: Request):
 
     Prefer JSON body (avoids Render/WAF 403 on multipart uploads)::
 
-        {"log_text": "...", "filename": "app.log", "expertise": "DB,Memory"}
+        {
+          "log_text": "...",
+          "filename": "app.log",
+          "expertise": "DB,Memory",
+          "openrouter_api_key": "sk-or-..."
+        }
 
     Multipart ``file`` + ``expertise`` is still accepted for local tooling.
+    Operators must supply their own OpenRouter key (body or ``X-OpenRouter-Api-Key``)
+    so host credits are not shared across logins.
     """
     content_type = (request.headers.get("content-type") or "").lower()
     filename = "upload.log"
     expertise_raw = ""
     raw = ""
+    openrouter_key = (request.headers.get("x-openrouter-api-key") or "").strip()
 
     if "application/json" in content_type:
         body = await request.json()
@@ -133,10 +142,16 @@ async def analyze(request: Request):
         raw = str(body.get("log_text") or body.get("logs") or body.get("text") or "")
         filename = str(body.get("filename") or filename)
         expertise_raw = str(body.get("expertise") or "")
+        body_key = str(body.get("openrouter_api_key") or body.get("api_key") or "").strip()
+        if body_key:
+            openrouter_key = body_key
     elif "multipart/form-data" in content_type:
         form = await request.form()
         upload = form.get("file")
         expertise_raw = str(form.get("expertise") or "")
+        form_key = str(form.get("openrouter_api_key") or form.get("api_key") or "").strip()
+        if form_key:
+            openrouter_key = form_key
         if upload is None:
             raise HTTPException(status_code=400, detail="Missing form field 'file'")
         data = await upload.read()  # type: ignore[union-attr]
@@ -149,6 +164,15 @@ async def analyze(request: Request):
     if not raw.strip():
         raise HTTPException(status_code=400, detail="No log text provided")
 
+    if not openrouter_key:
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "OpenRouter API key required. Paste your key on the Netra login screen "
+                "so analysis bills your account (not the shared host key)."
+            ),
+        )
+
     # Feed cockpit gauges: +1 ingest per line, process latency → Avg Response,
     # CRITICAL lines → Threat Incidents, traffic volume/sec + severity.
     try:
@@ -158,11 +182,16 @@ async def analyze(request: Request):
 
     print(
         f"[analyze] POST from {request.client.host if request.client else '?'} "
-        f"filename={filename!r} chars={len(raw)} ct={content_type[:40]!r}"
+        f"filename={filename!r} chars={len(raw)} ct={content_type[:40]!r} byok=1"
     )
 
     thread_id = str(uuid.uuid4())
-    run_config = {"configurable": {"thread_id": thread_id}}
+    run_config = {
+        "configurable": {
+            "thread_id": thread_id,
+            "openrouter_api_key": openrouter_key,
+        }
+    }
     initial = {
         "raw_logs": raw,
         "filename": filename,
@@ -176,6 +205,7 @@ async def analyze(request: Request):
         # Always emit `error` and/or `done` so the UI never hangs on a dropped generator.
         final = dict(initial)
         t0 = time.perf_counter()
+        key_token = set_request_openrouter_key(openrouter_key)
         try:
             yield {
                 "event": "status",
@@ -187,7 +217,7 @@ async def analyze(request: Request):
                 "data": json.dumps(
                     debug_line(
                         file=MAIN_SOURCE,
-                        message=f"analyze start · file={filename!r} chars={len(raw)} · graph.astream",
+                        message=f"analyze start · file={filename!r} chars={len(raw)} · graph.astream · BYOK",
                     )
                 ),
             }
@@ -267,6 +297,8 @@ async def analyze(request: Request):
                         }
                     ),
                 }
+        finally:
+            reset_request_openrouter_key(key_token)
 
     # ping keeps Render/proxies from treating a quiet LLM wait as a dead connection
     return EventSourceResponse(event_stream(), ping=15)
