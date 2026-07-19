@@ -223,6 +223,7 @@ def fallback_node(state: IncidentState) -> dict:
         for r in result.remediations:
             rem_dict = r.model_dump()
             rem_dict["fallback"] = True
+            rem_dict["kb_status"] = "learned"
             new_remediations.append(rem_dict)
 
         eval_result = _run_quick_eval(issue)
@@ -245,19 +246,23 @@ def fallback_node(state: IncidentState) -> dict:
             f"coverage={score['coverage']:.2f}"
         )
 
+    learned_ids = [i["id"] for i in fallback_issues]
     return {
         "remediations": all_rems,
         "fallback_results": {
+            "path": "miss_learn",
             "processed": len(fallback_issues),
             "new_remediations": len(new_remediations),
             "patterns_learned": total_learned,
+            "learned_issue_ids": learned_ids,
+            "learned_titles": [i.get("title", "") for i in fallback_issues],
             "eval_scores": eval_scores,
         },
         "trace": [trace_event(
             "fallback",
-            "\n".join(summary_parts),
+            "KB MISS → LEARN\n" + "\n".join(summary_parts),
             {
-                "fallback_issues": [i["id"] for i in fallback_issues],
+                "fallback_issues": learned_ids,
                 "eval_scores": eval_scores,
                 "new_remediations": new_remediations,
             },

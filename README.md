@@ -131,9 +131,37 @@ Never commit real `.env` files (gitignored). Only `.env.example` is tracked.
 | `GET` | `/api/events/recent` | Live telemetry buffer |
 | `GET` | `/api/metrics/traffic` | Traffic chart buckets |
 | `POST` | `/api/webhook/logs` | Lightweight n8n / monitor ingest |
+| `POST` | `/api/webhook/logs/demo` | **Eval path A** — webhook sample + 4-level RAG/LangGraph terminal demo |
 | `POST` | `/api/webhook/ingest` | Full webhook + optional analysis |
+| `GET` | `/api/debug/pipeline-demo` | Eval cheat-sheet (how to run the demo) |
+| `POST` | `/api/debug/pipeline-demo` | **Eval path B** — same 4-level demo without webhook |
 
 Dev: Vite proxies `/api/*` → `http://localhost:8000/*` (strips `/api`).
+
+### Pipeline evaluation demo (terminal)
+
+Start the backend in a **visible** terminal, then trigger **A** or **B**. Evidence prints as `LEVEL 1/4 … 4/4` with RAG hits and LangGraph node names.
+
+```bash
+cd backend
+uvicorn app.main:app --reload --port 8000
+```
+
+```bash
+# Path A — starts with WEBHOOK banner, then 4 levels
+curl -X POST "http://localhost:8000/api/webhook/logs/demo"
+
+# Or flag any logs POST:
+curl -X POST "http://localhost:8000/api/webhook/logs" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"message\":\"ERROR db pool\",\"pipeline_demo\":true}"
+
+# Path B — debug route only
+curl -X POST "http://localhost:8000/api/debug/pipeline-demo?mode=full"
+
+# Faster smoke (RAG only, skip LLM graph):
+curl -X POST "http://localhost:8000/api/debug/pipeline-demo?mode=rag_only"
+```
 
 ---
 

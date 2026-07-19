@@ -89,18 +89,34 @@ def remediation_node(state: IncidentState) -> dict:
         if not any(bad in r.suggested_command.lower() for bad in _DANGEROUS)
     ]
 
+    # Authoritative KB hit/miss from retrieval (not LLM-invented grounded_in names).
+    hits = 0
+    misses = 0
+    for r in safe:
+        iid = r.get("issue_id")
+        titles = list(grounding_by_issue.get(iid) or [])
+        if titles:
+            r["kb_status"] = "hit"
+            r["grounded_in"] = titles
+            hits += 1
+        else:
+            r["kb_status"] = "miss"
+            r["grounded_in"] = []
+            misses += 1
+
     return {
         "remediations": safe,
         "trace": [trace_event(
             "remediation",
-            f"Proposed {len(safe)} remediation(s), grounded in "
-            f"{len(seen)} retrieved chunk(s) "
-            f"(hybrid={config.RAG_USE_HYBRID}, rerank={config.RAG_USE_RERANK}, "
-            f"query_rewrites={rewrites}).",
+            f"Proposed {len(safe)} remediation(s) — KB HIT={hits} MISS={misses} "
+            f"(retrieved chunks={len(seen)}, hybrid={config.RAG_USE_HYBRID}, "
+            f"rerank={config.RAG_USE_RERANK}, query_rewrites={rewrites}).",
             {
                 "remediations": safe,
                 "retrieved_runbooks": grounding_by_issue,
                 "retrieval": retrieval_meta,
+                "kb_hits": hits,
+                "kb_misses": misses,
             },
         )],
     }

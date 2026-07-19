@@ -31,6 +31,9 @@ export interface Issue {
   evidence?: string[];
 }
 
+/** How the remediation was grounded against the runbook KB. */
+export type KbStatus = "hit" | "miss" | "learned";
+
 /** A RAG-grounded remediation for a specific issue. */
 export interface Remediation {
   issue_id: string;
@@ -40,6 +43,26 @@ export interface Remediation {
   risk_level?: "low" | "medium" | "high";
   requires_approval?: boolean;
   grounded_in?: string[];
+  /** Set by remediation/fallback nodes: hit = KB match, miss → learn, learned = written back. */
+  kb_status?: KbStatus;
+  fallback?: boolean;
+}
+
+/** Fallback node payload when KB miss triggers learn-into-Chroma. */
+export interface FallbackResults {
+  path?: "miss_learn" | string;
+  processed?: number;
+  new_remediations?: number;
+  patterns_learned?: number;
+  learned_issue_ids?: string[];
+  learned_titles?: string[];
+  eval_scores?: Array<{
+    issue_id: string;
+    issue_title?: string;
+    relevance_score?: number;
+    coverage?: number;
+    docs_found?: number;
+  }>;
 }
 
 /** A single step inside the incident cookbook. */
@@ -87,7 +110,7 @@ export interface AnalysisResult {
   jira_tickets?: JiraTicket[];
   slack_result?: SlackResult;
   image_analysis?: Record<string, unknown> | null;
-  fallback_results?: Record<string, unknown> | null;
+  fallback_results?: FallbackResults | null;
 }
 
 // ─── SSE / API contract types ─────────────────────────────────────────────────
@@ -106,6 +129,8 @@ export interface AnalyzeCallbacks {
   onNode?: (event: NodeEvent) => void;
   onDone?: (state: AnalysisResult) => void;
   onError?: (error: Error) => void;
+  /** TEMP debug strip — remove after testing. */
+  onDebug?: (line: DebugLogLine) => void;
 }
 
 // ─── Agent flow-chart view model ──────────────────────────────────────────────
@@ -113,7 +138,9 @@ export interface AnalyzeCallbacks {
 /** Real LangGraph node ids surfaced in the flow chart. */
 export type AgentId =
   | "classifier"
+  | "image_analyzer"
   | "remediation"
+  | "fallback"
   | "cookbook"
   | "jira"
   | "notifier";
@@ -128,6 +155,17 @@ export interface AgentState {
   progress: number;
   message: string;
   result?: unknown;
+  /** Optional / conditional graph node (dashed in the flowchart). */
+  optional?: boolean;
+}
+
+/** TEMP: backend debug lines streamed over SSE (`event: debug`). Remove after testing. */
+export interface DebugLogLine {
+  level?: string;
+  file: string;
+  node?: string | null;
+  message: string;
+  ts?: string;
 }
 
 // ─── Live telemetry view models (fed by the real webhook buffer) ──────────────

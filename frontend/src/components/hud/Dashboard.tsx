@@ -38,7 +38,7 @@ import WebhookConnector from "../integrations/WebhookConnector";
 
 const SAMPLE_TEMPLATES = [
   {
-    name: "DB Connection Pool Exhaustion",
+    name: "KB HIT · DB pool exhaustion",
     file: "postgres_db_failure.log",
     text: `CRITICAL [2026-07-18T13:20:04] database-service: PostgreSQL connection pool exhausted!
 CRITICAL [2026-07-18T13:20:05] database-service: ConnectionPoolTimeoutException - Timeout waiting for active connections > 100
@@ -47,7 +47,7 @@ ERROR [2026-07-18T13:20:10] api-gateway: Internal Server Error 500 on GET /api/v
 INFO [2026-07-18T13:20:12] database-service: Re-pooling failed. Active connection backlog index: 120`,
   },
   {
-    name: "Kubernetes OOMKilled",
+    name: "KB HIT · K8s OOMKilled",
     file: "k8s_oom_crash.log",
     text: `INFO [2026-07-18T13:21:40] pdf-generator: Starting high-volume monthly reports aggregation.
 WARN [2026-07-18T13:21:45] report-service: Memory allocation limit approaching 85% utilization threshold.
@@ -56,15 +56,16 @@ CRITICAL [2026-07-18T13:21:52] kubernetes-kubelet: Container crash detected in p
 CRITICAL [2026-07-18T13:21:53] kubernetes-kubelet: OOMKilled - Pod resources limit exceeded.`,
   },
   {
-    name: "Redis Cache Stampede",
-    file: "redis_stampede.log",
-    text: `INFO [2026-07-18T13:22:15] auth-service: Expired redis authentication key 'user_session_921' (TTL 0).
-WARN [2026-07-18T13:22:16] cache-redis: Mass cache miss on key user_session - routing 1500 parallel threads to main SQL database.
-ERROR [2026-07-18T13:22:18] database-service: Primary database connection refused. Connection threshold bottleneck.
-CRITICAL [2026-07-18T13:22:20] cache-redis: Redis Connection Refused on core cluster. Cache Stampede collapsing query pipelines.`,
+    name: "KB MISS · Novel unknown fault",
+    file: "novel_unknown_fault.log",
+    text: `CRITICAL [2026-07-18T14:01:00] chronos-orchestrator: TEMPORAL_ANCHOR_DESYNC code=QX-7741 — causality ledger checksum mismatch
+ERROR [2026-07-18T14:01:01] chronos-orchestrator: flux-capacitor manifold pressure exceeded soft limit (τ=9.4)
+ERROR [2026-07-18T14:01:02] chronos-orchestrator: unable to reconcile wormhole lease with sidereal registry
+FATAL [2026-07-18T14:01:03] chronos-orchestrator: UNKNOWN category incident — no prior runbook signature matches QX-7741
+CRITICAL [2026-07-18T14:01:04] api-gateway: cascading 503 on /v9/time-travel/commit`,
   },
   {
-    name: "JWT Verification Flood",
+    name: "KB HIT · JWT flood",
     file: "auth_brute_force.log",
     text: `WARN [2026-07-18T13:23:01] firewall-waf: Extreme high-frequency signature access at endpoint /api/v1/auth/login
 ERROR [2026-07-18T13:23:02] auth-service: TokenExpiredError - cryptographic verification failed for incoming JWT token.
@@ -286,7 +287,11 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <FlowChart agents={analysis.agents} overallProgress={analysis.progress} />
+          <FlowChart
+            agents={analysis.agents}
+            overallProgress={analysis.progress}
+            debugLines={analysis.debugLines}
+          />
         </div>
 
         <div className="lg:col-span-5 flex flex-col">

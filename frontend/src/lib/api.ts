@@ -1,6 +1,7 @@
 import type {
   AnalyzeCallbacks,
   AnalysisResult,
+  DebugLogLine,
   Expertise,
   LiveEvent,
   NodeEvent,
@@ -35,7 +36,7 @@ async function readErrorDetail(res: Response): Promise<string> {
 
 async function consumeAnalyzeStream(
   res: Response,
-  { onNode, onDone, onError }: Pick<AnalyzeCallbacks, "onNode" | "onDone" | "onError">,
+  { onNode, onDone, onError, onDebug }: AnalyzeCallbacks,
 ): Promise<boolean> {
   if (!res.body) return false;
   const reader = res.body.getReader();
@@ -46,6 +47,7 @@ async function consumeAnalyzeStream(
   const dispatch = (events: SseFrame[]): void => {
     for (const { evt, data } of events) {
       if (evt === "node") onNode?.(data as NodeEvent);
+      else if (evt === "debug") onDebug?.(data as DebugLogLine);
       else if (evt === "error") {
         const msg =
           data && typeof data === "object" && "message" in data
@@ -85,7 +87,7 @@ async function consumeAnalyzeStream(
  */
 export async function analyze(
   file: File,
-  { onNode, onDone, onError }: AnalyzeCallbacks,
+  { onNode, onDone, onError, onDebug }: AnalyzeCallbacks,
   expertise: Expertise[] = [],
 ): Promise<void> {
   let sawDone = false;
@@ -111,7 +113,7 @@ export async function analyze(
       throw new Error(`Request failed: ${res.status} (${url}) — ${detail}`);
     }
 
-    sawDone = await consumeAnalyzeStream(res, { onNode, onDone, onError });
+    sawDone = await consumeAnalyzeStream(res, { onNode, onDone, onError, onDebug });
     if (!sawDone) {
       onError?.(
         new Error(

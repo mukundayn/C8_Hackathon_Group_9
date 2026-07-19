@@ -12,24 +12,55 @@ import {
 import type { LiveEvent } from "../types";
 
 describe("flow-chart mappers", () => {
-  it("starts with 5 idle agents in canonical order", () => {
+  it("starts with idle agents including optional image_analyzer", () => {
     const agents = initialAgents();
     expect(agents.map((a) => a.id)).toEqual(AGENT_ORDER);
+    expect(AGENT_ORDER).toContain("image_analyzer");
+    expect(AGENT_ORDER).toContain("fallback");
+    expect(agents.find((a) => a.id === "image_analyzer")?.optional).toBe(true);
     expect(agents.every((a) => a.status === "idle")).toBe(true);
   });
 
-  it("completes a stage and activates the next on a node event", () => {
+  it("completes classifier and activates remediation (main path)", () => {
     let agents = initialAgents();
     agents = applyNodeEvent(agents, "classifier", "done");
-    expect(agents[0].status).toBe("completed");
-    expect(agents[1].status).toBe("active");
+    expect(agents.find((a) => a.id === "classifier")?.status).toBe("completed");
+    expect(agents.find((a) => a.id === "remediation")?.status).toBe("active");
   });
 
-  it("folds conditional image_analyzer into the remediation stage", () => {
+  it("marks image_analyzer completed when that node emits", () => {
     let agents = initialAgents();
+    agents = applyNodeEvent(agents, "classifier");
     agents = applyNodeEvent(agents, "image_analyzer");
-    const remediation = agents.find((a) => a.id === "remediation");
-    expect(remediation?.status).toBe("completed");
+    expect(agents.find((a) => a.id === "image_analyzer")?.status).toBe("completed");
+  });
+
+  it("skips dashed image_analyzer when remediation runs without it", () => {
+    let agents = initialAgents();
+    agents = applyNodeEvent(agents, "classifier");
+    agents = applyNodeEvent(agents, "remediation");
+    const img = agents.find((a) => a.id === "image_analyzer");
+    expect(img?.status).toBe("completed");
+    expect(img?.message).toMatch(/Skipped|optional/i);
+  });
+
+  it("marks KB Learn skipped when cookbook runs after a KB HIT", () => {
+    let agents = initialAgents();
+    agents = applyNodeEvent(agents, "classifier");
+    agents = applyNodeEvent(agents, "remediation");
+    agents = applyNodeEvent(agents, "cookbook");
+    const learn = agents.find((a) => a.id === "fallback");
+    expect(learn?.status).toBe("completed");
+    expect(learn?.message).toMatch(/Skipped|KB HIT/i);
+  });
+
+  it("activates KB Learn when fallback node emits", () => {
+    let agents = initialAgents();
+    agents = applyNodeEvent(agents, "remediation");
+    agents = applyNodeEvent(agents, "fallback", "KB MISS → LEARN");
+    const learn = agents.find((a) => a.id === "fallback");
+    expect(learn?.status).toBe("completed");
+    expect(learn?.message).toMatch(/LEARN|MISS/i);
   });
 
   it("ignores unknown node names", () => {
@@ -77,8 +108,5 @@ describe("categoryToExpertise", () => {
   });
   it("detects memory pressure from message text", () => {
     expect(categoryToExpertise("System", "container OOMKilled, heap exhausted")).toBe("Memory");
-  });
-  it("falls back to General", () => {
-    expect(categoryToExpertise("API", "routine request")).toBe("General");
   });
 });

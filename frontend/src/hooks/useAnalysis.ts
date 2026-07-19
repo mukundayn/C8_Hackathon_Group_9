@@ -9,6 +9,7 @@ import {
 import type {
   AgentState,
   AnalysisResult,
+  DebugLogLine,
   Expertise,
   TraceEntry,
 } from "../types";
@@ -17,6 +18,7 @@ export interface UseAnalysis {
   agents: AgentState[];
   progress: number;
   trace: TraceEntry[];
+  debugLines: DebugLogLine[];
   result: AnalysisResult | null;
   running: boolean;
   error: string | null;
@@ -33,6 +35,7 @@ export interface UseAnalysis {
 export function useAnalysis(expertise: Expertise[]): UseAnalysis {
   const [agents, setAgents] = useState<AgentState[]>(initialAgents);
   const [trace, setTrace] = useState<TraceEntry[]>([]);
+  const [debugLines, setDebugLines] = useState<DebugLogLine[]>([]);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +44,7 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
   const reset = useCallback(() => {
     setAgents(initialAgents());
     setTrace([]);
+    setDebugLines([]);
     setResult(null);
     setError(null);
   }, []);
@@ -51,11 +55,14 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
       setFileName(file.name);
       setAgents(
         initialAgents().map(
-          (a, i): AgentState =>
-            i === 0 ? { ...a, status: "active", progress: 40, message: `${a.name} running…` } : a,
+          (a): AgentState =>
+            a.id === "classifier"
+              ? { ...a, status: "active", progress: 40, message: `${a.name} running…` }
+              : a,
         ),
       );
       setTrace([]);
+      setDebugLines([]);
       setResult(null);
       setError(null);
 
@@ -68,11 +75,17 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
             setAgents((prev) => applyNodeEvent(prev, node, msg));
             if (tr && tr.length > 0) setTrace((t) => [...t, ...tr]);
           },
+          onDebug: (line) => {
+            const stamped: DebugLogLine = {
+              ...line,
+              ts: new Date().toISOString().slice(11, 19),
+            };
+            setDebugLines((prev) => [...prev.slice(-200), stamped]);
+          },
           onDone: (finalState) => {
             setResult(finalState);
             setAgents((prev) => finalizeAgents(prev));
             setRunning(false);
-            // Partial done after a server error still carries useful agent output.
             if (finalState && typeof finalState === "object" && "error" in finalState) {
               const msg = String((finalState as { error?: unknown }).error || "");
               if (msg) setError(msg);
@@ -101,6 +114,7 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
     agents,
     progress: overallProgress(agents),
     trace,
+    debugLines,
     result,
     running,
     error,

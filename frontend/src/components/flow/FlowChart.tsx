@@ -1,192 +1,291 @@
-import {
-  Search,
-  ShieldCheck,
-  BookOpen,
-  Ticket,
-  Slack,
-  Cpu,
-  Play,
-} from "lucide-react";
 import type { AgentId, AgentState } from "../../types";
 import { playHoverTick } from "../../utils/audio";
+import PipelineDebugLog from "./PipelineDebugLog";
+import type { DebugLogLine } from "../../types";
 
 interface FlowChartProps {
   agents: AgentState[];
   overallProgress: number;
+  /** TEMP debug strip — remove after testing. */
+  debugLines?: DebugLogLine[];
 }
 
-function AgentIcon({ id, active }: { id: AgentId; active: boolean }) {
-  const cls = `w-6 h-6 ${active ? "animate-pulse text-cyan-400" : "text-gray-500"}`;
-  switch (id) {
-    case "classifier":
-      return <Search className={cls} />;
-    case "remediation":
-      return <ShieldCheck className={cls} />;
-    case "cookbook":
-      return <BookOpen className={cls} />;
-    case "jira":
-      return <Ticket className={cls} />;
-    case "notifier":
-      return <Slack className={cls} />;
-    default:
-      return <Cpu className={cls} />;
+type GraphNodeId = AgentId | "START" | "END";
+
+interface LayoutNode {
+  id: GraphNodeId;
+  label: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  optional?: boolean;
+  terminal?: boolean;
+}
+
+interface LayoutEdge {
+  from: GraphNodeId;
+  to: GraphNodeId;
+  label?: string;
+  dashed?: boolean;
+}
+
+/** Positions match approved LangGraph LR diagram (viewBox 0 0 1100 480). */
+const NODES: LayoutNode[] = [
+  { id: "START", label: "START", x: 24, y: 210, w: 72, h: 36, terminal: true },
+  { id: "classifier", label: "classifier", x: 140, y: 190, w: 130, h: 56 },
+  { id: "image_analyzer", label: "image_analyzer", x: 340, y: 48, w: 150, h: 56, optional: true },
+  { id: "remediation", label: "remediation", x: 340, y: 190, w: 140, h: 56 },
+  { id: "fallback", label: "fallback", x: 560, y: 320, w: 130, h: 56 },
+  { id: "cookbook", label: "cookbook", x: 560, y: 190, w: 130, h: 56 },
+  { id: "jira", label: "jira", x: 780, y: 80, w: 110, h: 56 },
+  { id: "notifier", label: "notifier", x: 780, y: 190, w: 120, h: 56 },
+  { id: "END", label: "END", x: 980, y: 210, w: 72, h: 36, terminal: true },
+];
+
+const EDGES: LayoutEdge[] = [
+  { from: "START", to: "classifier" },
+  { from: "classifier", to: "image_analyzer", label: "has image", dashed: true },
+  { from: "classifier", to: "remediation", label: "no image" },
+  { from: "image_analyzer", to: "remediation", dashed: true },
+  { from: "remediation", to: "cookbook", label: "KB HIT" },
+  { from: "remediation", to: "fallback", label: "KB MISS" },
+  { from: "fallback", to: "cookbook", label: "learn → Chroma" },
+  { from: "cookbook", to: "jira", label: "critical/high" },
+  { from: "cookbook", to: "notifier", label: "else" },
+  { from: "jira", to: "notifier" },
+  { from: "notifier", to: "END" },
+];
+
+function nodeCenter(n: LayoutNode): { cx: number; cy: number } {
+  return { cx: n.x + n.w / 2, cy: n.y + n.h / 2 };
+}
+
+function edgePath(from: LayoutNode, to: LayoutNode): string {
+  const a = nodeCenter(from);
+  const b = nodeCenter(to);
+  // Simple elbow when vertical distance is large.
+  if (Math.abs(b.cy - a.cy) > 40 && Math.abs(b.cx - a.cx) > 40) {
+    const midX = (a.cx + b.cx) / 2;
+    return `M ${a.cx} ${a.cy} L ${midX} ${a.cy} L ${midX} ${b.cy} L ${b.cx} ${b.cy}`;
   }
+  return `M ${a.cx} ${a.cy} L ${b.cx} ${b.cy}`;
 }
 
-function statusBorder(status: AgentState["status"]): string {
+function statusOf(agents: AgentState[], id: GraphNodeId): AgentState["status"] | "terminal" {
+  if (id === "START" || id === "END") return "terminal";
+  return agents.find((a) => a.id === id)?.status ?? "idle";
+}
+
+function nodeFill(status: AgentState["status"] | "terminal"): string {
   switch (status) {
     case "active":
-      return "border-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.15)] bg-slate-950";
+      return "#083344";
     case "completed":
-      return "border-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.1)] bg-slate-950";
+      return "#064e3b";
     case "failed":
-      return "border-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.15)] bg-slate-950";
+      return "#4c0519";
+    case "terminal":
+      return "#0f172a";
     default:
-      return "border-slate-800 bg-slate-950/40";
+      return "#0f172a";
   }
 }
 
-function statusText(status: AgentState["status"]): string {
+function nodeStroke(status: AgentState["status"] | "terminal", optional?: boolean): string {
+  if (optional && status === "idle") return "#475569";
   switch (status) {
     case "active":
-      return "RUNNING…";
+      return "#22d3ee";
     case "completed":
-      return "COMPLETED";
+      return "#10b981";
     case "failed":
-      return "HALTED";
+      return "#f43f5e";
+    case "terminal":
+      return "#334155";
     default:
-      return "PENDING";
+      return "#334155";
   }
 }
 
-function statusTextColor(status: AgentState["status"]): string {
-  switch (status) {
-    case "active":
-      return "text-cyan-400";
-    case "completed":
-      return "text-emerald-400 font-bold";
-    case "failed":
-      return "text-rose-400";
-    default:
-      return "text-slate-600 font-mono";
+function edgeStroke(
+  agents: AgentState[],
+  edge: LayoutEdge,
+): { color: string; width: number } {
+  const toStatus = statusOf(agents, edge.to);
+  const fromStatus = statusOf(agents, edge.from);
+  if (toStatus === "completed" || toStatus === "active" || fromStatus === "completed") {
+    if (toStatus === "completed" || (fromStatus === "completed" && toStatus !== "idle")) {
+      return { color: "#10b981", width: 2 };
+    }
+    if (toStatus === "active") return { color: "#22d3ee", width: 2.2 };
   }
+  return { color: edge.dashed ? "#475569" : "#334155", width: 1.4 };
 }
 
-export default function FlowChart({ agents, overallProgress }: FlowChartProps) {
+export default function FlowChart({ agents, overallProgress, debugLines = [] }: FlowChartProps) {
+  const byId = Object.fromEntries(NODES.map((n) => [n.id, n])) as Record<GraphNodeId, LayoutNode>;
+
   return (
     <div className="relative border border-slate-800 bg-slate-900/40 rounded-2xl p-6 backdrop-blur-md">
-      <div className="absolute inset-0 bg-grid-white/[0.01] rounded-2xl pointer-events-none" />
       <div className="absolute top-2 right-4 flex items-center gap-1.5 text-[10px] font-mono text-slate-500 select-none">
         <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-        PIPELINE SYNAPSE MONITOR
+        LANGGRAPH · NODES + EDGES
       </div>
 
-      <h2 className="text-sm font-mono uppercase tracking-widest text-cyan-400 mb-6 flex items-center gap-2">
-        <Cpu className="w-4 h-4 text-cyan-400" />
-        5-Agent LangGraph Resolution Engine
+      <h2 className="text-sm font-mono uppercase tracking-widest text-cyan-400 mb-2 flex flex-wrap items-center gap-2">
+        LangGraph Resolution Graph
+        <span className="normal-case tracking-normal text-[10px] text-slate-500 font-sans">
+          dashed = optional image_analyzer · green = node complete
+        </span>
       </h2>
 
-      <div className="mb-8 border border-slate-800 bg-slate-950 rounded-xl p-3">
+      <div className="mb-4 border border-slate-800 bg-slate-950 rounded-xl p-3">
         <div className="flex justify-between items-center text-xs font-mono mb-1">
           <span className="text-slate-400">PIPELINE INTEGRATION INDEX</span>
           <span className="text-cyan-400 font-bold">{overallProgress}%</span>
         </div>
         <div className="h-2 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
           <div
-            className="h-full bg-gradient-to-r from-cyan-500 to-blue-600 rounded-full transition-all duration-500 relative shadow-[0_0_10px_#06b6d4]"
+            className="h-full bg-gradient-to-r from-cyan-500 to-blue-600 rounded-full transition-all duration-500"
             style={{ width: `${overallProgress}%` }}
-          >
-            <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.15),transparent)] animate-pulse" />
-          </div>
-        </div>
-        <div className="flex justify-between items-center text-[9px] font-mono text-slate-500 mt-1">
-          <span>LANGGRAPH STREAM</span>
-          <span>NETRA AI COGNITIVE PARITY</span>
+          />
         </div>
       </div>
 
-      <div className="relative grid grid-cols-1 md:grid-cols-5 gap-6">
-        <div className="absolute top-1/2 left-0 w-full h-0.5 -translate-y-1/2 hidden md:block border-t border-dashed border-cyan-500/20 -z-0 pointer-events-none" />
+      <div className="w-full overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/80">
+        <svg
+          viewBox="0 0 1100 420"
+          className="w-full min-w-[720px] h-auto"
+          role="img"
+          aria-label="LangGraph node and edge flowchart"
+        >
+          <defs>
+            <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6 Z" fill="#64748b" />
+            </marker>
+            <marker id="arrow-active" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6 Z" fill="#22d3ee" />
+            </marker>
+            <marker id="arrow-done" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6 Z" fill="#10b981" />
+            </marker>
+          </defs>
 
-        {agents.map((agent, index) => {
-          const isActive = agent.status === "active";
-          const isCompleted = agent.status === "completed";
-          const isFailed = agent.status === "failed";
+          {EDGES.map((e) => {
+            const from = byId[e.from];
+            const to = byId[e.to];
+            const { color, width } = edgeStroke(agents, e);
+            const marker =
+              color === "#10b981" ? "url(#arrow-done)" : color === "#22d3ee" ? "url(#arrow-active)" : "url(#arrow)";
+            const mid = {
+              x: (nodeCenter(from).cx + nodeCenter(to).cx) / 2,
+              y: (nodeCenter(from).cy + nodeCenter(to).cy) / 2 - 8,
+            };
+            return (
+              <g key={`${e.from}-${e.to}-${e.label ?? ""}`}>
+                <path
+                  d={edgePath(from, to)}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={width}
+                  strokeDasharray={e.dashed ? "6 4" : undefined}
+                  markerEnd={marker}
+                  opacity={0.9}
+                />
+                {e.label && (
+                  <text
+                    x={mid.x}
+                    y={mid.y}
+                    textAnchor="middle"
+                    className="fill-slate-500"
+                    style={{ fontSize: 10, fontFamily: "ui-monospace, monospace" }}
+                  >
+                    {e.label}
+                  </text>
+                )}
+              </g>
+            );
+          })}
 
-          return (
-            <div
-              key={agent.id}
-              className="relative z-10 flex flex-col items-center group"
-              onMouseEnter={playHoverTick}
-            >
-              <div
-                id={`agent-${agent.id}`}
-                className={`w-full max-w-[220px] border rounded-lg p-4 transition-all duration-300 backdrop-blur-md text-left flex flex-col justify-between h-[155px] ${statusBorder(agent.status)}`}
+          {NODES.map((n) => {
+            const st = statusOf(agents, n.id);
+            const agent = n.id !== "START" && n.id !== "END" ? agents.find((a) => a.id === n.id) : undefined;
+            const rx = n.terminal ? n.h / 2 : 8;
+            return (
+              <g
+                key={n.id}
+                id={`agent-${n.id}`}
+                onMouseEnter={playHoverTick}
+                style={{ cursor: "default" }}
               >
-                <div className="absolute top-2 right-3 flex items-center gap-1 text-[9px] font-mono leading-none">
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full ${
-                      isActive
-                        ? "bg-cyan-400 animate-ping"
-                        : isCompleted
-                          ? "bg-emerald-400"
-                          : isFailed
-                            ? "bg-red-400"
-                            : "bg-gray-700"
-                    }`}
-                  />
-                  <span className={statusTextColor(agent.status)}>{statusText(agent.status)}</span>
-                </div>
-
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className={`p-1.5 rounded bg-gray-900/80 border ${isActive ? "border-cyan-400" : "border-gray-800"}`}>
-                      <AgentIcon id={agent.id} active={isActive} />
-                    </div>
-                    <div>
-                      <div className="text-[10px] font-mono text-cyan-400/60 uppercase">AGENT 0{index + 1}</div>
-                      <h3 className="text-xs font-bold text-white leading-tight uppercase tracking-wider">{agent.name}</h3>
-                    </div>
-                  </div>
-
-                  <p className="text-[11px] text-gray-400 line-clamp-2 min-h-[32px] leading-relaxed">
-                    {isActive ? agent.message : isCompleted ? `Success: ${agent.role}` : `Role: ${agent.role}`}
-                  </p>
-                </div>
-
-                <div className="mt-3">
-                  <div className="flex justify-between items-center text-[8px] font-mono text-gray-500 mb-0.5">
-                    <span>STAGE COVERAGE</span>
-                    <span>{agent.progress}%</span>
-                  </div>
-                  <div className="h-1 bg-gray-950 rounded-full overflow-hidden border border-gray-800">
-                    <div
-                      className={`h-full rounded-full transition-all duration-300 ${
-                        isCompleted ? "bg-emerald-500" : isFailed ? "bg-red-500" : "bg-cyan-400"
-                      }`}
-                      style={{ width: `${agent.progress}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {index < agents.length - 1 && (
-                <div className="my-2 md:my-0 md:absolute md:top-1/2 md:left-full md:-translate-x-2 md:-translate-y-1/2 text-cyan-500/40 pointer-events-none">
-                  <Play className="w-4 h-4 transform rotate-90 md:rotate-0 animate-pulse fill-cyan-500/20" />
-                </div>
-              )}
-            </div>
-          );
-        })}
+                <rect
+                  x={n.x}
+                  y={n.y}
+                  width={n.w}
+                  height={n.h}
+                  rx={rx}
+                  ry={rx}
+                  fill={nodeFill(st)}
+                  stroke={nodeStroke(st, n.optional)}
+                  strokeWidth={st === "active" ? 2.2 : 1.6}
+                  strokeDasharray={n.optional ? "5 3" : undefined}
+                />
+                <text
+                  x={n.x + n.w / 2}
+                  y={n.y + n.h / 2 - (agent && !n.terminal ? 6 : 0)}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  style={{
+                    fontSize: n.terminal ? 11 : 12,
+                    fontFamily: "ui-monospace, monospace",
+                    fontWeight: 700,
+                    fill: st === "completed" ? "#6ee7b7" : st === "active" ? "#67e8f8" : "#94a3b8",
+                  }}
+                >
+                  {n.label}
+                </text>
+                {agent && !n.terminal && (
+                  <text
+                    x={n.x + n.w / 2}
+                    y={n.y + n.h / 2 + 12}
+                    textAnchor="middle"
+                    style={{ fontSize: 9, fontFamily: "ui-monospace, monospace", fill: "#64748b" }}
+                  >
+                    {st === "active"
+                      ? "RUNNING"
+                      : st === "completed"
+                        ? agent.message.startsWith("Skipped")
+                          ? "SKIPPED"
+                          : "DONE"
+                        : st === "failed"
+                          ? "FAILED"
+                          : n.optional
+                            ? "OPTIONAL"
+                            : "PENDING"}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+        </svg>
       </div>
 
-      <div className="mt-6 border-t border-slate-800/80 pt-4 flex flex-col md:flex-row justify-between items-center gap-2 text-[9px] font-mono text-slate-500 text-left">
-        <span>SECURITY ENVELOPE: SERVER_SIDE_LLM</span>
-        <span className="flex items-center gap-4">
-          <span>SOURCE: LANGGRAPH_ASTREAM</span>
-          <span>RAG: CHROMA + RERANK</span>
+      <div className="mt-3 flex flex-wrap gap-3 text-[9px] font-mono text-slate-500">
+        <span className="flex items-center gap-1">
+          <span className="inline-block w-3 h-3 rounded-sm border border-emerald-500 bg-emerald-950" /> DONE
         </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block w-3 h-3 rounded-sm border border-cyan-400 bg-cyan-950" /> RUNNING
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block w-3 h-3 rounded-sm border border-dashed border-slate-500 bg-slate-950" /> OPTIONAL
+        </span>
+        <span className="ml-auto">SOURCE: graph.astream · edges from backend/app/graph.py</span>
       </div>
+
+      {/* TEMP: plain debug log under flowchart — remove after testing */}
+      <PipelineDebugLog lines={debugLines} />
     </div>
   );
 }

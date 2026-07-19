@@ -12,6 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.graph import graph
 from app.knowledge.runbook_store import seed_if_empty
+from app.debug_log import MAIN_SOURCE, describe_node_update, debug_line
 from app import webhook, live_store
 
 # Directory where the built React app lives (set via STATIC_DIR env var).
@@ -170,6 +171,17 @@ async def analyze(request: Request):
                 "event": "status",
                 "data": json.dumps({"phase": "started", "filename": filename, "chars": len(raw)}),
             }
+            # TEMP debug strip on UI — remove after testing.
+            yield {
+                "event": "debug",
+                "data": json.dumps(
+                    debug_line(
+                        file=MAIN_SOURCE,
+                        message=f"analyze start · file={filename!r} chars={len(raw)} · graph.astream",
+                    )
+                ),
+            }
+            print(f"[analyze] start filename={filename!r} chars={len(raw)}", flush=True)
             async for chunk in graph.astream(initial, run_config, stream_mode="updates"):
                 for node_name, update in chunk.items():
                     if not isinstance(update, dict):
@@ -177,13 +189,31 @@ async def analyze(request: Request):
                     _merge_update(final, update)
                     payload = {"node": node_name, "update": _jsonable(update)}
                     yield {"event": "node", "data": json.dumps(payload)}
-                    print(f"[analyze] node={node_name} ok")
+                    for dbg in describe_node_update(node_name, update):
+                        print(f"[analyze:debug] {dbg['file']} · {dbg['message']}", flush=True)
+                        yield {"event": "debug", "data": json.dumps(dbg)}
+                    print(f"[analyze] node={node_name} ok", flush=True)
+            yield {
+                "event": "debug",
+                "data": json.dumps(
+                    debug_line(
+                        file=MAIN_SOURCE,
+                        message="analyze done · emitting final state",
+                    )
+                ),
+            }
             yield {"event": "done", "data": json.dumps(_done_payload(final))}
-            print("[analyze] done emitted")
+            print("[analyze] done emitted", flush=True)
         except Exception as exc:
             # LLM/RAG failures, serialization bugs, etc. — surface to the client.
             msg = f"{type(exc).__name__}: {exc}"
-            print(f"[analyze] stream failed: {msg}")
+            print(f"[analyze] stream failed: {msg}", flush=True)
+            yield {
+                "event": "debug",
+                "data": json.dumps(
+                    debug_line(file=MAIN_SOURCE, message=f"ANALYZE FAILED · {msg}", level="ERROR")
+                ),
+            }
             yield {"event": "error", "data": json.dumps({"message": msg})}
             try:
                 partial = _done_payload(final)
@@ -217,6 +247,59 @@ def metrics_traffic():
     return {"points": live_store.traffic_points()}
 
 
+@api.get("/debug/pipeline-demo")
+def pipeline_demo_help():
+    """Evaluator cheat-sheet for the 4-level RAG + LangGraph terminal demo."""
+    return {
+        "title": "Netra pipeline evaluation demo",
+        "what_you_will_see": [
+            "WEBHOOK banner (path A) or DEBUG banner (path B)",
+            "LEVEL 1/4 memory → RAG hits → LangGraph nodes",
+            "LEVEL 2/4 database → RAG hits → LangGraph nodes",
+            "LEVEL 3/4 network → RAG hits → LangGraph nodes",
+            "LEVEL 4/4 critical → RAG hits → LangGraph nodes",
+            "DONE summary with PASS/FAIL per level",
+        ],
+        "path_A_webhook": {
+            "quick": "POST /api/webhook/logs/demo",
+            "flag_on_logs": {
+                "url": "POST /api/webhook/logs",
+                "body": {
+                    "source": "n8n",
+                    "message": "ERROR db: pool exhausted",
+                    "pipeline_demo": True,
+                    "demo_mode": "full",
+                },
+            },
+        },
+        "path_B_debug": {
+            "url": "POST /api/debug/pipeline-demo?mode=full",
+            "modes": {
+                "full": "RAG + full LangGraph per level (best for judges)",
+                "rag_only": "RAG only — faster smoke test without LLM",
+            },
+        },
+        "hint": "Run uvicorn in a visible terminal. All evidence prints there, not in the browser.",
+    }
+
+
+@api.post("/debug/pipeline-demo")
+async def pipeline_demo_run(request: Request):
+    """Path B: run the 4-level evaluation demo and print evidence to the server terminal.
+
+    Query: ``?mode=full`` (default) or ``?mode=rag_only``.
+    """
+    from app.pipeline_demo import run_pipeline_demo
+
+    mode = request.query_params.get("mode") or "full"
+    if mode not in ("full", "rag_only"):
+        mode = "full"
+    print("\n" + "#" * 72, flush=True)
+    print("  DEBUG ROUTE · POST /api/debug/pipeline-demo", flush=True)
+    print("#" * 72, flush=True)
+    return await run_pipeline_demo(trigger="debug:/api/debug/pipeline-demo", mode=mode)  # type: ignore[arg-type]
+
+
 # Webhook ingestion (/webhook/ingest, /webhook/logs, …) lives under the same prefixes.
 api.include_router(webhook.router)
 
@@ -238,6 +321,7 @@ def _is_reserved_spa_path(full_path: str) -> bool:
         "redoc",
         "openapi.json",
         "webhook",
+        "debug",
         "assets",
     }
 

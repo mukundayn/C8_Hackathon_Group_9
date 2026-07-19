@@ -276,15 +276,83 @@ async def get_result(request_id: str):
 
 
 @router.post("/logs")
-async def ingest_logs(payload: dict[str, Any] = Body(...)):
+async def ingest_logs(
+    request: Request,
+    payload: dict[str, Any] = Body(...),
+):
     """Lightweight ingestion for n8n / monitoring — live buffer only (no LLM).
 
     Accepts:
       - {"logs": ["line", ...]} or {"logs": "multi\\nline"}
       - {"message": "...", "severity": "...", "service": "...", "category": "..."}
       - any other JSON → one stringified event
+
+    Evaluation (path A): set ``"pipeline_demo": true`` (or ``?pipeline_demo=1``)
+    to print a 4-level RAG + LangGraph demo in the server terminal after ingest.
     """
-    return _ingest_loose_body(payload, default_source="n8n")
+    from app.pipeline_demo import print_webhook_ingest_banner, run_pipeline_demo
+
+    # Strip demo flags so they are not treated as log fields.
+    want_demo = bool(payload.pop("pipeline_demo", False))
+    mode = str(payload.pop("demo_mode", None) or request.query_params.get("mode") or "full")
+    if request.query_params.get("pipeline_demo") in ("1", "true", "yes"):
+        want_demo = True
+    if mode not in ("full", "rag_only"):
+        mode = "full"
+
+    result = _ingest_loose_body(payload, default_source="n8n")
+    preview = str(
+        payload.get("message")
+        or payload.get("logs")
+        or payload
+    )
+    print_webhook_ingest_banner(
+        source=str(payload.get("source", "n8n")),
+        ingested=int(result.get("ingested") or 0),
+        preview=preview if isinstance(preview, str) else json.dumps(preview)[:200],
+        pipeline_demo=want_demo,
+    )
+
+    if want_demo:
+        demo = await run_pipeline_demo(trigger="webhook:/api/webhook/logs", mode=mode)  # type: ignore[arg-type]
+        return {**result, "pipeline_demo": demo}
+    return result
+
+
+@router.post("/logs/demo")
+async def ingest_logs_demo(request: Request):
+    """Path A shortcut for evaluators: ingest a sample webhook event, then run the 4-level demo.
+
+    Watch the **uvicorn terminal** for LEVEL 1/4 … 4/4 banners (RAG hits + LangGraph nodes).
+    Query: ``?mode=full`` (default) or ``?mode=rag_only``.
+    """
+    from app.pipeline_demo import print_webhook_ingest_banner, run_pipeline_demo
+
+    mode = request.query_params.get("mode") or "full"
+    if mode not in ("full", "rag_only"):
+        mode = "full"
+
+    sample = {
+        "source": "eval-webhook",
+        "message": "CRITICAL auth-service: JWT verification flood — starting pipeline demo",
+        "severity": "CRITICAL",
+        "service": "auth-service",
+        "category": "Auth",
+    }
+    result = _ingest_loose_body(sample, default_source="eval-webhook")
+    print_webhook_ingest_banner(
+        source="eval-webhook",
+        ingested=int(result.get("ingested") or 0),
+        preview=sample["message"],
+        pipeline_demo=True,
+    )
+    demo = await run_pipeline_demo(trigger="webhook:/api/webhook/logs/demo", mode=mode)  # type: ignore[arg-type]
+    return {
+        "status": "ok",
+        "message": "Webhook sample ingested. 4-level pipeline demo finished — see server terminal.",
+        "ingest": result,
+        "pipeline_demo": demo,
+    }
 
 
 @router.post("/test")
