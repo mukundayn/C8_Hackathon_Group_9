@@ -82,10 +82,12 @@ export function applyNodeEvent(
   nodeName: string,
   message?: string,
   update?: Record<string, unknown> | null,
+  opts?: { expectImage?: boolean },
 ): AgentState[] {
   const stage = NODE_TO_STAGE[nodeName];
   if (!stage) return agents;
 
+  const expectImage = Boolean(opts?.expectImage);
   const stageIdx = AGENT_ORDER.indexOf(stage);
   const fallbackIdx = AGENT_ORDER.indexOf("fallback");
   const imageIdx = AGENT_ORDER.indexOf("image_analyzer");
@@ -190,12 +192,24 @@ export function applyNodeEvent(
     // Activate the next primary successor (linear heuristic for "running…" cue).
     // Graph UI also paints edges; this keeps MetricGauges / progress alive.
     if (idx === stageIdx + 1) {
-      // After classifier, prefer highlighting remediation (main path); image stays optional idle
-      // unless the event was image_analyzer.
+      // Screenshot uploads take classifier → image_analyzer → remediation.
+      // Plain logs skip the dashed node. Do NOT light remediation early on
+      // image runs — that painted a fake "no image" edge when vision crashed.
       if (nodeName === "classifier" && a.id === "image_analyzer") {
+        if (expectImage) {
+          return {
+            ...a,
+            status: "active",
+            progress: 55,
+            message: `${a.name} running…`,
+          };
+        }
         return a;
       }
       if (nodeName === "classifier" && a.id === "remediation") {
+        if (expectImage) {
+          return a;
+        }
         return {
           ...a,
           status: "active",
@@ -223,13 +237,13 @@ export function applyNodeEvent(
       };
     }
 
-    // classifier → also warm remediation when image_analyzer is the +1 slot
-    if (nodeName === "classifier" && a.id === "remediation") {
+    // classifier → warm remediation only on the no-image path
+    if (nodeName === "classifier" && a.id === "remediation" && !expectImage) {
       return {
         ...a,
         status: "active",
         progress: 40,
-        message: `${a.name} running… (or waiting on image branch)`,
+        message: `${a.name} running…`,
       };
     }
 

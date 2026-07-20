@@ -18,6 +18,7 @@ from app.nodes.notifier import notifier_node
 # Re-export routers for callers that still import from app.graph
 __all__ = [
     "graph",
+    "graph_ephemeral",
     "build_graph",
     "route_after_classifier",
     "route_after_remediation",
@@ -25,7 +26,7 @@ __all__ = [
 ]
 
 
-def build_graph():
+def build_graph(*, checkpointer: bool = True):
     g = StateGraph(IncidentState)
 
     g.add_node("classifier", classifier_node)
@@ -57,7 +58,13 @@ def build_graph():
     g.add_edge("jira", "notifier")
     g.add_edge("notifier", END)
 
-    return g.compile(checkpointer=MemorySaver())
+    if checkpointer:
+        return g.compile(checkpointer=MemorySaver())
+    # Analyze SSE path: no MemorySaver — avoids checkpointing bulky state on
+    # Render free tier (OOM mid-stream after classifier / vision).
+    return g.compile()
 
 
-graph = build_graph()
+graph = build_graph(checkpointer=True)
+# One-shot cockpit / webhook streams — no thread checkpoints.
+graph_ephemeral = build_graph(checkpointer=False)

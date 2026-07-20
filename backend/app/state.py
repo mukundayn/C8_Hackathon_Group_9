@@ -16,7 +16,11 @@ class IncidentState(TypedDict, total=False):
     operator_expertise: list[str]   # e.g. ["DB", "Memory"] — drives Jira routing
 
     # image input (optional)
-    image_data: str             # base64-encoded image (no data-URL prefix)
+    # Prefer has_image + image_ref → image_store; avoid parking megabytes of
+    # base64 in MemorySaver (Render OOM between classifier and remediation).
+    has_image: bool             # True when a screenshot was attached this run
+    image_ref: str              # key into app.image_store (bytes live outside graph)
+    image_data: str             # legacy/base64 in-state (discouraged)
     image_mime: str             # e.g. image/png — used by vision request
     image_description: str      # text description of the image
 

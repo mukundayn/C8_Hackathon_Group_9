@@ -28,13 +28,22 @@ describe("flow-chart mappers", () => {
     agents = applyNodeEvent(agents, "classifier", "done");
     expect(agents.find((a) => a.id === "classifier")?.status).toBe("completed");
     expect(agents.find((a) => a.id === "remediation")?.status).toBe("active");
+    expect(agents.find((a) => a.id === "image_analyzer")?.status).toBe("idle");
+  });
+
+  it("activates image_analyzer (not remediation) after classifier on screenshot runs", () => {
+    let agents = initialAgents();
+    agents = applyNodeEvent(agents, "classifier", "done", null, { expectImage: true });
+    expect(agents.find((a) => a.id === "image_analyzer")?.status).toBe("active");
+    expect(agents.find((a) => a.id === "remediation")?.status).toBe("idle");
   });
 
   it("marks image_analyzer completed when that node emits", () => {
     let agents = initialAgents();
-    agents = applyNodeEvent(agents, "classifier");
+    agents = applyNodeEvent(agents, "classifier", undefined, null, { expectImage: true });
     agents = applyNodeEvent(agents, "image_analyzer");
     expect(agents.find((a) => a.id === "image_analyzer")?.status).toBe("completed");
+    expect(agents.find((a) => a.id === "remediation")?.status).toBe("active");
   });
 
   it("skips dashed image_analyzer when remediation runs without it", () => {

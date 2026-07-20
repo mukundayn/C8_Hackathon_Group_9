@@ -13,11 +13,15 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
-from app.graph import graph
+from app.graph import graph_ephemeral
 from app.knowledge.runbook_store import seed_if_empty
 from app.debug_log import MAIN_SOURCE, describe_node_update, debug_line
 from app import webhook, live_store
 from app.openrouter_key import reset_request_openrouter_key, set_request_openrouter_key
+from app.image_store import clear_pending_image, put_pending_image
+
+# ~1.5 MB binary ≈ 2M base64 chars — larger payloads OOM Render free tier.
+_MAX_IMAGE_B64_CHARS = 2_000_000
 
 # Directory where the built React app lives (set via STATIC_DIR env var).
 # In production (Render) this is ./static (populated by build.sh).
@@ -88,15 +92,20 @@ _BULKY_STATE_KEYS = frozenset(
 )
 
 
+def _slim_for_sse(update: dict) -> dict:
+    """Drop bulky keys before putting a node update on the SSE wire."""
+    return {k: v for k, v in update.items() if k not in _BULKY_STATE_KEYS}
+
+
 def _done_payload(final: dict) -> dict:
     """Build a JSON-safe `done` payload; drop bulky raw inputs from the wire.
 
     Critical: never echo ``image_data`` (base64) in SSE — it OOMs/proxy-kills
     the stream on Render free tier and freezes the browser.
     """
-    slim = {k: v for k, v in final.items() if k not in _BULKY_STATE_KEYS}
+    slim = _slim_for_sse(final)
     # Keep a tiny flag so the UI knows vision ran without shipping pixels.
-    if final.get("image_data") or final.get("image_analysis"):
+    if final.get("has_image") or final.get("image_analysis") or final.get("image_ref"):
         slim["had_image"] = True
     try:
         return _jsonable(slim)
@@ -111,7 +120,9 @@ def _done_payload(final: dict) -> dict:
             "trace": _jsonable(final.get("trace") or []),
             "fallback_results": _jsonable(final.get("fallback_results")),
             "image_analysis": _jsonable(final.get("image_analysis")),
-            "had_image": bool(final.get("image_data") or final.get("image_analysis")),
+            "had_image": bool(
+                final.get("has_image") or final.get("image_analysis") or final.get("image_ref")
+            ),
         }
 
 
@@ -217,6 +228,15 @@ async def analyze(request: Request):
             "INFO netra: screenshot attached for vision analysis\n"
         )
 
+    if image_data and len(image_data) > _MAX_IMAGE_B64_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Screenshot too large ({len(image_data)} base64 chars). "
+                "Compress/resize under ~1.5 MB and retry."
+            ),
+        )
+
     if not openrouter_key:
         raise HTTPException(
             status_code=401,
@@ -242,20 +262,31 @@ async def analyze(request: Request):
     )
 
     thread_id = str(uuid.uuid4())
+    # Ephemeral graph: no MemorySaver thread_id required (avoids checkpoint OOM).
     run_config = {
         "configurable": {
-            "thread_id": thread_id,
             "openrouter_api_key": openrouter_key,
         }
     }
+    # Do NOT put base64 into LangGraph state — MemorySaver checkpoints it after
+    # every node and OOMs Render free tier. Bytes live in image_store by image_ref.
+    image_ref = thread_id if image_data else ""
+    if image_data:
+        put_pending_image(
+            image_ref,
+            image_data,
+            mime=image_mime or "image/png",
+            description=image_description,
+        )
     initial = {
         "raw_logs": raw,
         "filename": filename,
         "operator_expertise": _parse_expertise(expertise_raw),
         "trace": [],
+        "has_image": bool(image_data),
     }
     if image_data:
-        initial["image_data"] = image_data
+        initial["image_ref"] = image_ref
         initial["image_mime"] = image_mime or "image/png"
         if image_description:
             initial["image_description"] = image_description
@@ -270,7 +301,14 @@ async def analyze(request: Request):
         try:
             yield {
                 "event": "status",
-                "data": json.dumps({"phase": "started", "filename": filename, "chars": len(raw)}),
+                "data": json.dumps(
+                    {
+                        "phase": "started",
+                        "filename": filename,
+                        "chars": len(raw),
+                        "has_image": bool(image_data),
+                    }
+                ),
             }
             # TEMP debug strip on UI — remove after testing.
             yield {
@@ -278,17 +316,27 @@ async def analyze(request: Request):
                 "data": json.dumps(
                     debug_line(
                         file=MAIN_SOURCE,
-                        message=f"analyze start · file={filename!r} chars={len(raw)} · graph.astream · BYOK",
+                        message=(
+                            f"analyze start · file={filename!r} chars={len(raw)} "
+                            f"has_image={bool(image_data)} "
+                            f"image_b64={len(image_data) if image_data else 0} · graph.astream · BYOK"
+                        ),
                     )
                 ),
             }
-            print(f"[analyze] start filename={filename!r} chars={len(raw)}", flush=True)
-            async for chunk in graph.astream(initial, run_config, stream_mode="updates"):
+            print(
+                f"[analyze] start filename={filename!r} chars={len(raw)} "
+                f"has_image={bool(image_data)}",
+                flush=True,
+            )
+            async for chunk in graph_ephemeral.astream(
+                initial, run_config, stream_mode="updates"
+            ):
                 for node_name, update in chunk.items():
                     if not isinstance(update, dict):
                         continue
                     _merge_update(final, update)
-                    payload = {"node": node_name, "update": _jsonable(update)}
+                    payload = {"node": node_name, "update": _jsonable(_slim_for_sse(update))}
                     yield {"event": "node", "data": json.dumps(payload)}
                     for dbg in describe_node_update(node_name, update):
                         print(f"[analyze:debug] {dbg['file']} · {dbg['message']}", flush=True)
@@ -296,6 +344,42 @@ async def analyze(request: Request):
                     print(f"[analyze] node={node_name} ok", flush=True)
                     # Hint next stage — remediation can take minutes (no debug until it finishes).
                     if node_name == "classifier":
+                        n_issues = len(final.get("issues") or [])
+                        next_node = (
+                            "image_analyzer"
+                            if final.get("has_image") or image_data
+                            else "remediation"
+                        )
+                        if next_node == "image_analyzer":
+                            yield {
+                                "event": "debug",
+                                "data": json.dumps(
+                                    debug_line(
+                                        file="backend/app/nodes/image_analyzer.py",
+                                        node="image_analyzer",
+                                        message=(
+                                            "ENTERING image_analyzer (vision) · screenshot attached · "
+                                            "then remediation."
+                                        ),
+                                    )
+                                ),
+                            }
+                        else:
+                            yield {
+                                "event": "debug",
+                                "data": json.dumps(
+                                    debug_line(
+                                        file="backend/app/nodes/remediation.py",
+                                        node="remediation",
+                                        message=(
+                                            f"ENTERING remediation (blocking) · top {min(n_issues, 2)}/{n_issues} issue(s) → "
+                                            "hybrid RAG + confidence rewrite (if low score) + 1 structured LLM (≤90s). "
+                                            "Watch server prints [remediation] RAG k/n …"
+                                        ),
+                                    )
+                                ),
+                            }
+                    if node_name == "image_analyzer":
                         n_issues = len(final.get("issues") or [])
                         yield {
                             "event": "debug",
@@ -305,8 +389,7 @@ async def analyze(request: Request):
                                     node="remediation",
                                     message=(
                                         f"ENTERING remediation (blocking) · top {min(n_issues, 2)}/{n_issues} issue(s) → "
-                                        "hybrid RAG + confidence rewrite (if low score) + 1 structured LLM (≤90s). "
-                                        "Watch server prints [remediation] RAG k/n …"
+                                        "hybrid RAG + confidence rewrite + 1 structured LLM (≤90s)."
                                     ),
                                 )
                             ),
@@ -360,6 +443,8 @@ async def analyze(request: Request):
                 }
         finally:
             reset_request_openrouter_key(key_token)
+            if image_ref:
+                clear_pending_image(image_ref)
 
     # ping keeps Render/proxies from treating a quiet LLM wait as a dead connection
     return EventSourceResponse(event_stream(), ping=15)

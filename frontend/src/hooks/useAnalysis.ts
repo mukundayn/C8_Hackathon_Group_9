@@ -84,6 +84,9 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
       setRunning(true);
       setFlowCompleted(false);
       setFileName(file.name);
+      const expectImage =
+        file.type.startsWith("image/") ||
+        /\.(png|jpe?g|gif|webp)$/i.test(file.name || "");
       setAgents(
         initialAgents().map(
           (a): AgentState =>
@@ -105,7 +108,13 @@ export function useAnalysis(expertise: Expertise[]): UseAnalysis {
             const tr = update?.trace;
             const msg = tr && tr.length > 0 ? tr[tr.length - 1].message : undefined;
             setAgents((prev) =>
-              applyNodeEvent(prev, node, msg, update as Record<string, unknown> | undefined),
+              applyNodeEvent(
+                prev,
+                node,
+                msg,
+                update as Record<string, unknown> | undefined,
+                { expectImage },
+              ),
             );
             if (tr && tr.length > 0) setTrace((t) => [...t, ...tr]);
           },

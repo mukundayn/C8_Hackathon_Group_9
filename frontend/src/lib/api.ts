@@ -88,8 +88,9 @@ async function consumeAnalyzeStream(
   return sawDone;
 }
 
-/** Max screenshot size before base64 (~1.33×) blows SSE / Render memory. */
-const MAX_IMAGE_BYTES = 1_500_000; // 1.5 MB
+/** Max screenshot size before base64 (~1.33×) blows request/Render memory. */
+const MAX_IMAGE_BYTES = 900_000; // ~0.9 MB after compress
+const MAX_IMAGE_EDGE = 1024;
 
 function isImageFile(file: File): boolean {
   if (file.type.startsWith("image/")) return true;
@@ -106,14 +107,54 @@ function imageMimeFor(file: File): string {
 }
 
 /** Binary → base64 without data-URL prefix (chunked to avoid call-stack limits). */
-async function fileToBase64(file: File): Promise<string> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
+async function bytesToBase64(bytes: Uint8Array): Promise<string> {
   let binary = "";
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
   return btoa(binary);
+}
+
+async function fileToBase64(file: Blob): Promise<string> {
+  return bytesToBase64(new Uint8Array(await file.arrayBuffer()));
+}
+
+/**
+ * Downscale + JPEG-compress screenshots so vision + Render free tier survive.
+ * Falls back to the original file if canvas encode fails.
+ */
+async function prepareImageForUpload(
+  file: File,
+): Promise<{ blob: Blob; mime: string; filename: string }> {
+  const fallbackMime = imageMimeFor(file);
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      bitmap.close();
+      return { blob: file, mime: fallbackMime, filename: file.name };
+    }
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), "image/jpeg", 0.72),
+    );
+    if (!blob || blob.size === 0) {
+      return { blob: file, mime: fallbackMime, filename: file.name };
+    }
+    const base = (file.name || "screenshot").replace(/\.[^.]+$/, "");
+    return { blob, mime: "image/jpeg", filename: `${base}.jpg` };
+  } catch {
+    return { blob: file, mime: fallbackMime, filename: file.name };
+  }
 }
 
 /**
@@ -146,17 +187,21 @@ export async function analyze(
     };
 
     if (isImageFile(file)) {
-      if (file.size > MAX_IMAGE_BYTES) {
+      const prepared = await prepareImageForUpload(file);
+      if (prepared.blob.size > MAX_IMAGE_BYTES) {
         throw new Error(
-          `Screenshot too large (${(file.size / 1e6).toFixed(1)} MB). ` +
-            `Resize/compress to under ${MAX_IMAGE_BYTES / 1e6} MB (PNG/JPEG), then retry.`,
+          `Screenshot too large (${(prepared.blob.size / 1e6).toFixed(1)} MB after compress). ` +
+            `Resize to under ${MAX_IMAGE_BYTES / 1e6} MB, then retry.`,
         );
       }
-      body.image_data = await fileToBase64(file);
-      body.image_mime = imageMimeFor(file);
-      body.image_description = `Operations screenshot upload: ${filename}`;
+      body.filename = prepared.filename || filename;
+      body.image_data = await fileToBase64(prepared.blob);
+      body.image_mime = prepared.mime;
+      body.image_description = `Operations screenshot upload: ${prepared.filename || filename}`;
       // Classifier needs a non-empty raw_logs string; image path adds issues via image_analyzer.
-      body.log_text = `[image-upload] ${filename}\nINFO netra: screenshot attached for vision analysis\n`;
+      body.log_text =
+        `[image-upload] ${prepared.filename || filename}\n` +
+        "INFO netra: screenshot attached for vision analysis\n";
     } else {
       body.log_text = await file.text();
     }

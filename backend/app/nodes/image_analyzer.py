@@ -273,7 +273,8 @@ def analyze_image_with_vision(
     training_context = _build_training_context()
 
     query = description or "operations screenshot"
-    runbook_docs = retrieve(query, k=3, use_hybrid=True, use_rerank=True)
+    # use_rerank=False — LLM-rerank hangs / OOMs on Render free tier (same as remediator).
+    runbook_docs = retrieve(query, k=3, use_hybrid=True, use_rerank=False)
     runbooks_text = "\n\n".join(
         f"[{d.metadata.get('title', 'runbook')}]\n{d.page_content}"
         for d in runbook_docs
@@ -331,13 +332,29 @@ def analyze_image_with_vision(
 
 def image_analyzer_node(state: IncidentState) -> dict:
     """Graph node that processes attached images in the state."""
-    image_data = state.get("image_data")
-    image_description = state.get("image_description", "")
-    image_mime = state.get("image_mime") or "image/png"
+    from app.image_store import clear_pending_image, pop_pending_image
+
+    image_ref = state.get("image_ref")
+    pending = pop_pending_image(image_ref)
+    image_data = (pending.data_b64 if pending else None) or state.get("image_data")
+    image_description = (
+        (pending.description if pending else "")
+        or state.get("image_description")
+        or ""
+    )
+    image_mime = (
+        (pending.mime if pending else None)
+        or state.get("image_mime")
+        or "image/png"
+    )
 
     if not image_data and not image_description:
+        clear_pending_image(image_ref)
         return {
             "image_analysis": None,
+            "has_image": False,
+            "image_data": "",
+            "image_ref": "",
             "trace": [trace_event("image_analyzer", "No image provided, skipping.")],
         }
 
@@ -346,10 +363,33 @@ def image_analyzer_node(state: IncidentState) -> dict:
     if image_data and not str(image_data).startswith("data:"):
         vision_payload = f"data:{image_mime};base64,{image_data}"
 
-    analysis = analyze_image_with_vision(
-        image_base64=vision_payload,
-        description=image_description,
+    print(
+        f"[image_analyzer] vision invoke · mime={image_mime} "
+        f"b64_chars={len(image_data) if image_data else 0}",
+        flush=True,
     )
+    try:
+        analysis = analyze_image_with_vision(
+            image_base64=vision_payload or "",
+            description=image_description,
+        )
+    except Exception as exc:  # noqa: BLE001 — never OOM-kill mid-stream silently
+        clear_pending_image(image_ref)
+        msg = f"{type(exc).__name__}: {exc}"
+        print(f"[image_analyzer] FAILED · {msg}", flush=True)
+        return {
+            "image_analysis": None,
+            "has_image": False,
+            "image_data": "",
+            "image_ref": "",
+            "trace": [
+                trace_event(
+                    "image_analyzer",
+                    f"Vision failed (continuing without screenshot issues): {msg}",
+                )
+            ],
+        }
+
     analysis_dict = analysis.model_dump()
 
     new_issues = []
@@ -371,13 +411,23 @@ def image_analyzer_node(state: IncidentState) -> dict:
             "summary": analysis.description,
             "evidence": analysis.detected_errors,
         })
-        from app.threat_score import refine_threat_scores_llm
+        try:
+            from app.threat_score import refine_threat_scores_llm
 
-        new_issues = refine_threat_scores_llm(new_issues)
+            new_issues = refine_threat_scores_llm(new_issues)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[image_analyzer] threat refine skipped: {exc}", flush=True)
+
+    # Bytes already popped from the store; clear any leftover ref in state.
+    clear_pending_image(image_ref)
 
     return {
         "image_analysis": analysis_dict,
         "issues": state.get("issues", []) + new_issues,
+        "has_image": True,
+        "image_data": "",
+        "image_ref": "",
+        "image_description": image_description[:240] if image_description else "",
         "trace": [trace_event(
             "image_analyzer",
             f"Analyzed image: {analysis.category} ({analysis.severity}). "

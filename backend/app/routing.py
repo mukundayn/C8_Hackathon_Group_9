@@ -8,9 +8,18 @@ CRITICAL = {"critical", "high"}
 
 
 def route_after_classifier(state: dict[str, Any]) -> str:
-    """Route to image analyzer if image data is present, otherwise to remediation."""
-    if state.get("image_data") or state.get("image_description"):
+    """Route to image analyzer when a screenshot was attached for this run."""
+    if state.get("has_image") or state.get("image_ref") or state.get("image_data"):
         return "image_analyzer"
+    if state.get("image_description"):
+        return "image_analyzer"
+    try:
+        from app.image_store import has_pending_image
+
+        if has_pending_image(state.get("image_ref")):
+            return "image_analyzer"
+    except Exception:
+        pass
     return "remediation"
 
 
