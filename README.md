@@ -22,7 +22,7 @@ Upload logs or screenshots (or stream lines via webhook) → a **LangGraph pipel
 - **SSE streaming** of LangGraph nodes into the live flowchart
 - **Hybrid RAG** — Chroma runbooks, confidence rewrite, KB HIT vs MISS→LEARN
 - **HITL** before Jira/Slack on newly learned critical/high issues
-- **Jira + Slack** — real clients when `JIRA_*` / `SLACK_*` are set; otherwise MOCK (badge in UI)
+- **Jira + Slack** — real clients when `JIRA_*` / `SLACK_*` are set;
 - **Live feed** — `POST /api/webhook/logs` fills Live Console / traffic / threat cards (**no LLM**); full triage = upload `/api/analyze` or `/api/webhook/ingest`
 - **Hybrid threat scores** — fast signal score on ingest; LLM refine for critical/high during analyze
 - **CI** — GitHub Actions: pytest + typecheck + vitest + frontend build
@@ -151,7 +151,7 @@ START
   → [fallback]              # KB MISS → learn into Chroma
   → cookbook                # checklist
   → [jira]                  # critical/high; HITL may defer newly learned
-  → notifier                # Slack (LIVE or MOCK)
+  → notifier                # Slack (LIVE)
 END
 ```
 
